@@ -1,0 +1,11 @@
+[package]
+name = "morfo-skia"
+description = "CPU renderer for morfo (tiny-skia + ab_glyph). Runs anywhere, no GPU needed."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+morfo = { path = "../morfo", version = "0.1.0" }
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+ab_glyph = "0.2"

@@ -1,0 +1,8 @@
+[package]
+name = "morfo"
+description = "Adaptive, fluidly morphing UI components. Renderer-agnostic, zero dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,366 @@
+use morfo::{DrawCmd, Theme, Ui, Vec2};
+
+const VIEW: Vec2 = Vec2::new(800.0, 600.0);
+const ITEMS: [(&str, &str); 3] = [("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")];
+
+fn frame(ui: &mut Ui, t: &mut f64, mut f: impl FnMut(&mut Ui)) -> bool {
+    *t += 1.0 / 60.0;
+    ui.begin(*t, VIEW);
+    f(ui);
+    ui.end().animating
+}
+
+fn settle(ui: &mut Ui, t: &mut f64, mut f: impl FnMut(&mut Ui)) {
+    for _ in 0..1000 {
+        if !frame(ui, t, &mut f) {
+            return;
+        }
+    }
+    panic!("never came to rest");
+}
+
+fn click(ui: &mut Ui, t: &mut f64, id: morfo::Id, mut f: impl FnMut(&mut Ui)) {
+    let p = ui.rect_of(id).unwrap().center();
+    ui.pointer_moved(p);
+    frame(ui, t, &mut f);
+    ui.pointer_pressed();
+    frame(ui, t, &mut f);
+    ui.pointer_released();
+    frame(ui, t, &mut f);
+}
+
+#[test]
+fn rests_and_wakes() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut on = false;
+    settle(&mut ui, &mut t, |ui| {
+        ui.toggle("sw", &mut on);
+    });
+    // At rest: every further frame reports idle.
+    for _ in 0..10 {
+        assert!(!frame(&mut ui, &mut t, |ui| {
+            ui.toggle("sw", &mut on);
+        }));
+    }
+    // A click flips the value and wakes the animation up.
+    let id = ui.id("sw");
+    click(&mut ui, &mut t, id, |ui| {
+        ui.toggle("sw", &mut on);
+    });
+    assert!(on);
+    assert!(frame(&mut ui, &mut t, |ui| {
+        ui.toggle("sw", &mut on);
+    }));
+}
+
+#[test]
+fn layout_changes_are_continuous() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut open = false;
+    let build = |ui: &mut Ui, open: bool| {
+        ui.reveal("extra", open, |ui| {
+            ui.label("one");
+            ui.label("two");
+        });
+        ui.button("below", "Below");
+    };
+    settle(&mut ui, &mut t, |ui| build(ui, open));
+    let id = ui.id("below");
+    let y0 = ui.rect_of(id).unwrap().y;
+
+    open = true;
+    let mut last = y0;
+    let mut max_step = 0.0f32;
+    for _ in 0..600 {
+        let moving = frame(&mut ui, &mut t, |ui| build(ui, open));
+        let y = ui.rect_of(id).unwrap().y;
+        max_step = max_step.max((y - last).abs());
+        last = y;
+        if !moving {
+            break;
+        }
+    }
+    assert!(last > y0 + 30.0, "the button was pushed down");
+    assert!(max_step < 8.0, "it moved smoothly, never jumped ({max_step} px in one frame)");
+}
+
+#[test]
+fn toolbar_adapts_to_usage() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.adaptive_actions("bar", &ITEMS);
+    };
+    settle(&mut ui, &mut t, build);
+    let id = |ui: &Ui, k: &str| ui.id("bar").child(k);
+    let (a, c) = (id(&ui, "a"), id(&ui, "c"));
+    assert!(ui.rect_of(a).unwrap().x < ui.rect_of(c).unwrap().x);
+    let width_before = ui.rect_of(c).unwrap().w;
+
+    for _ in 0..6 {
+        click(&mut ui, &mut t, c, build);
+    }
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    // The heavily used action moved to the front and grew.
+    assert!(ui.rect_of(c).unwrap().x < ui.rect_of(a).unwrap().x);
+    assert!(ui.rect_of(c).unwrap().w > width_before);
+
+    // A different user (fresh profile) gets the original interface back.
+    ui.set_profile(morfo::Profile::new());
+    settle(&mut ui, &mut t, build);
+    assert!(ui.rect_of(a).unwrap().x < ui.rect_of(c).unwrap().x);
+}
+
+#[test]
+fn steady_frames_do_not_grow_the_draw_list() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut v = 0.5;
+    let mut build = |ui: &mut Ui| {
+        ui.card("c", |ui| {
+            ui.heading("Title");
+            ui.slider("s", &mut v, 200.0);
+            ui.button("b", "Go");
+        });
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let n = ui.draw_list().len();
+    assert!(ui.draw_list().commands().iter().any(|c| matches!(c, DrawCmd::Text { .. })));
+    frame(&mut ui, &mut t, &mut build);
+    assert_eq!(ui.draw_list().len(), n);
+}
+
+// ----- floating, selection, keyboard and scroll ---------------------------
+
+use morfo::Key;
+
+#[test]
+fn dialog_blocks_what_is_under_it_and_animates_out() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut open, mut under, mut inside) = (false, 0, 0);
+    let build = |ui: &mut Ui, open: &mut bool, under: &mut u32, inside: &mut u32| {
+        if ui.button("trigger", "Open").clicked {
+            *open = true;
+        }
+        if ui.button("under", "Under").clicked {
+            *under += 1;
+        }
+        ui.dialog("dlg", "trigger", open, 300.0, |ui| {
+            ui.label("Hello");
+            if ui.button("ok", "OK").clicked {
+                *inside += 1;
+                ui.close();
+            }
+        });
+    };
+    macro_rules! go {
+        () => {
+            |ui: &mut Ui| build(ui, &mut open, &mut under, &mut inside)
+        };
+    }
+    settle(&mut ui, &mut t, go!());
+    let (trigger, below, ok) = (ui.id("trigger"), ui.id("under"), ui.id("ok"));
+    assert!(ui.rect_of(ok).is_none(), "closed dialogs are not built");
+    click(&mut ui, &mut t, trigger, go!());
+    settle(&mut ui, &mut t, go!());
+    assert!(open);
+    // The button underneath no longer reacts...
+    click(&mut ui, &mut t, below, go!());
+    assert_eq!(under, 0);
+    // ...and that click outside the panel dismissed the dialog.
+    assert!(!open);
+    settle(&mut ui, &mut t, go!());
+
+    click(&mut ui, &mut t, trigger, go!());
+    settle(&mut ui, &mut t, go!());
+    click(&mut ui, &mut t, ok, go!());
+    assert_eq!(inside, 1);
+    assert!(!open);
+    // Still being drawn while it shrinks back: an exit animation.
+    assert!(frame(&mut ui, &mut t, go!()));
+    settle(&mut ui, &mut t, go!());
+    // Once closed, what was under it works again.
+    click(&mut ui, &mut t, below, go!());
+    assert_eq!(under, 1);
+
+    // Escape closes too.
+    click(&mut ui, &mut t, trigger, go!());
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, go!());
+    assert!(!open);
+}
+
+#[test]
+fn menu_picks_an_option_and_closes() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut picked = None;
+    let items = [("cut", "Cut"), ("copy", "Copy"), ("paste", "Paste")];
+    let mut build = |ui: &mut Ui| {
+        if let Some(i) = ui.menu("edit", "Edit", &items) {
+            picked = Some(i);
+        }
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let menu = ui.id("edit");
+    assert!(ui.rect_of(menu.child("copy")).is_none());
+    click(&mut ui, &mut t, menu, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    click(&mut ui, &mut t, menu.child("copy"), &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    assert_eq!(picked, Some(1));
+}
+
+#[test]
+fn toasts_leave_by_themselves() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    settle(&mut ui, &mut t, |_| {});
+    let empty = ui.draw_list().len();
+    ui.toast("Saved");
+    settle(&mut ui, &mut t, |_| {});
+    assert!(ui.draw_list().len() > empty);
+    // At rest, but it asks to be woken when the toast expires.
+    t += 1.0 / 60.0;
+    ui.begin(t, VIEW);
+    let wake = ui.end().wake_in.expect("a wake-up is scheduled");
+    assert!(wake > 1.0 && wake < 3.5);
+    t += wake as f64;
+    settle(&mut ui, &mut t, |_| {});
+    assert_eq!(ui.draw_list().len(), empty);
+    ui.begin(t + 1.0, VIEW);
+    assert!(ui.end().wake_in.is_none());
+}
+
+#[test]
+fn selection_controls() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut check, mut choice, mut chip, mut n, mut section) = (false, 0usize, false, 9, None);
+    let mut build = |ui: &mut Ui| {
+        ui.checkbox("check", "Check", &mut check);
+        ui.radio("r0", "Zero", &mut choice, 0);
+        ui.radio("r1", "One", &mut choice, 1);
+        ui.chip("chip", "Chip", &mut chip);
+        ui.stepper("n", &mut n, 0, 10);
+        ui.accordion("acc", &["A", "B"], &mut section, |ui, i| {
+            ui.button(if i == 0 { "in-a" } else { "in-b" }, "Inside");
+        });
+    };
+    settle(&mut ui, &mut t, &mut build);
+    for key in ["check", "r1", "chip"] {
+        let id = ui.id(key);
+        click(&mut ui, &mut t, id, &mut build);
+    }
+    // Stepper: + twice from 9 stops at the maximum.
+    let plus = ui.id("n").with(1);
+    click(&mut ui, &mut t, plus, &mut build);
+    click(&mut ui, &mut t, plus, &mut build);
+    // Accordion: opening B builds its body; opening A closes B.
+    let acc = ui.id("acc");
+    click(&mut ui, &mut t, acc.with(1), &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    let in_b = ui.id("in-b");
+    assert!(ui.rect_of(in_b).is_some());
+    click(&mut ui, &mut t, acc.with(0), &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert!(check && chip);
+    assert_eq!((choice, n, section), (1, 10, Some(0)));
+}
+
+#[test]
+fn text_field_editing_and_focus() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut a, mut b) = (String::new(), String::from("xy"));
+    let mut submitted = false;
+    let mut build = |ui: &mut Ui| {
+        submitted |= ui.text_field("a", &mut a, "Name", 200.0).submitted;
+        ui.text_field("b", &mut b, "Other", 200.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    // Typing with no focus goes nowhere.
+    ui.text_input("zzz");
+    frame(&mut ui, &mut t, &mut build);
+    let field = ui.id("a");
+    click(&mut ui, &mut t, field, &mut build);
+    assert!(ui.has_focus());
+    ui.text_input("Año");
+    frame(&mut ui, &mut t, &mut build);
+    // Caret keys respect multi-byte characters.
+    for key in [Key::Left, Key::Backspace, Key::Home, Key::Delete, Key::End] {
+        ui.key_pressed(key);
+    }
+    frame(&mut ui, &mut t, &mut build);
+    ui.text_input("!");
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, &mut build);
+    // Tab moves to the next field, with the caret at its end.
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, &mut build);
+    ui.text_input("z");
+    frame(&mut ui, &mut t, &mut build);
+    // A focused field keeps asking for frames to blink its caret.
+    t += 1.0 / 60.0;
+    ui.begin(t, VIEW);
+    build(&mut ui);
+    assert!(ui.end().wake_in.is_some());
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, &mut build);
+    assert!(!ui.has_focus());
+    drop(build);
+    assert_eq!(a, "o!");
+    assert_eq!(b, "xyz");
+    assert!(submitted);
+}
+
+#[test]
+fn scroll_clamps_and_culls() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("list", 120.0, |ui| {
+            for _ in 0..50 {
+                ui.label("row");
+            }
+        });
+        ui.button("after", "After");
+    };
+    settle(&mut ui, &mut t, build);
+    // Only the rows inside the viewport are drawn.
+    let texts = |ui: &Ui| ui.draw_list().commands().iter().filter(|c| matches!(c, DrawCmd::Text { .. })).count();
+    assert!(texts(&ui) < 12, "{} rows drawn", texts(&ui));
+    // What follows is placed after the viewport, not after the content.
+    let after = ui.id("after");
+    let y = ui.rect_of(after).unwrap().y;
+    assert!(y < 220.0);
+
+    let first_text_y = |ui: &Ui| {
+        ui.draw_list().commands().iter().find_map(|c| if let DrawCmd::Text { pos, .. } = c { Some(pos.y) } else { None }).unwrap()
+    };
+    let top = first_text_y(&ui);
+    ui.pointer_moved(Vec2::new(60.0, 60.0));
+    ui.scroll_wheel(-100_000.0);
+    settle(&mut ui, &mut t, build);
+    assert!(first_text_y(&ui) != top && texts(&ui) > 0);
+    assert_eq!(ui.rect_of(after).unwrap().y, y, "scrolling moves nothing outside");
+    // Scrolling back past the start stops at the start.
+    ui.scroll_wheel(100_000.0);
+    settle(&mut ui, &mut t, build);
+    assert_eq!(first_text_y(&ui), top);
+}
+
+#[test]
+fn suggestions_follow_habits() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.adaptive_actions("bar", &ITEMS);
+        ui.suggestions("quick", "Quick:", "bar", &ITEMS, 2);
+    };
+    settle(&mut ui, &mut t, build);
+    let shortcut = ui.id("quick").child("b");
+    assert!(ui.rect_of(shortcut).is_none(), "no habits, no suggestions");
+    let b = ui.id("bar").child("b");
+    for _ in 0..3 {
+        click(&mut ui, &mut t, b, build);
+    }
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    assert!(ui.rect_of(shortcut).is_some());
+    assert!(ui.rect_of(ui.id("quick").child("a")).is_none());
+}
