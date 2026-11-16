@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Dudas y conversación
+    url: https://github.com/AlvaroDlhz/morfo/discussions
+    about: Preguntas de uso, ideas en bruto y lo que no sea un error concreto.
+  - name: Fallo de seguridad
+    url: https://github.com/AlvaroDlhz/morfo/security/advisories/new
+    about: Infórmalo en privado, nunca en un issue público.

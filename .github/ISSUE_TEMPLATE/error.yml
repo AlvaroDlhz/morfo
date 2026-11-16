@@ -1,0 +1,43 @@
+name: Error
+description: Algo no funciona como debería
+labels: ["bug"]
+body:
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué pasa
+      description: Describe el error. Si es visual, adjunta una captura o un vídeo.
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Cómo reproducirlo
+      description: Pasos o un fragmento de código mínimo.
+      placeholder: |
+        1. Abre la documentación
+        2. Ve a «Controles»
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué esperabas
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Dónde
+      multiple: true
+      options:
+        - Escritorio, GPU (morfo-wgpu)
+        - Escritorio, CPU (morfo-skia)
+        - Web (morfo-web)
+        - Núcleo / sin ventana
+  - type: input
+    id: entorno
+    attributes:
+      label: Sistema y versión
+      placeholder: "Linux (Wayland), morfo-ui 0.1.0, rustc 1.88"

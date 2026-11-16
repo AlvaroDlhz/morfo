@@ -1,0 +1,28 @@
+name: Propuesta
+description: Un componente nuevo, una mejora o un cambio en la API
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qué problema resuelve
+      description: El caso de uso real, antes que la solución.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Cómo lo imaginas
+      description: API, comportamiento, cómo se anima y cómo se adapta al uso.
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+  - type: checkboxes
+    id: ayuda
+    attributes:
+      label: Contribución
+      options:
+        - label: Me gustaría implementarlo yo
