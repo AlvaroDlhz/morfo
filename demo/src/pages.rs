@@ -1,7 +1,10 @@
 //! The documentation pages: each explains a group of components, shows them
 //! working and gives the code behind them.
 
-use morfo::{Color, Icon, Prominence, Size, Ui, Variant, Vec2};
+use std::f32::consts::{FRAC_PI_2, TAU};
+
+use morfo::theme::{ACCENT, BORDER, TEXT};
+use morfo::{Align, Color, Icon, Prominence, Size, Ui, Variant, Vec2};
 
 use crate::*;
 
@@ -306,6 +309,38 @@ pub fn cajas(ui: &mut Ui, s: &mut State) {
             "if barra.close { salir(); }",
         ]);
     });
+    ui.space(8.0);
+    ui.title("Rejilla, columnas y alineación");
+    ui.card("card-rejilla", |ui| {
+        ui.label("grid(3): celdas del mismo ancho, fila a fila");
+        ui.grid(3, |ui| {
+            for (i, name) in ["Ventas", "Clientes", "Pedidos", "Devoluciones", "Stock"].iter().enumerate() {
+                ui.card(&format!("celda-{i}"), |ui| {
+                    ui.muted(name);
+                    ui.text(&format!("{}", 120 + i * 37), 24.0);
+                });
+            }
+        });
+        ui.separator();
+        ui.label("columns(&[1.0, 2.0]): anchos proporcionales");
+        ui.columns(&[1.0, 2.0], |ui, i| {
+            ui.card(&format!("col-{i}"), |ui| {
+                ui.muted(if i == 0 { "Un tercio" } else { "Dos tercios del ancho" });
+            });
+        });
+        ui.separator();
+        ui.align(Align::End, |ui| {
+            ui.row(|ui| {
+                ui.button_with("cancelar", "Cancelar", Variant::Ghost, Size::Md);
+                ui.button("aceptar", "Aceptar");
+            });
+        });
+    });
+    ui.code(&[
+        "ui.grid(3, |ui| { for t in &tarjetas { ui.card(t.clave, |ui| { /* ... */ }); } });",
+        "ui.columns(&[1.0, 2.0], |ui, i| { /* columna i */ });",
+        "ui.align(Align::End, |ui| { ui.button(\"aceptar\", \"Aceptar\"); });",
+    ]);
 }
 
 pub fn formas(ui: &mut Ui, s: &mut State) {
@@ -326,6 +361,38 @@ pub fn formas(ui: &mut Ui, s: &mut State) {
         "let (tamano, radio, color) = FORMAS[i];",
         "ui.surface(\"forma\", tamano, radio, color);",
         "if ui.button(\"morph\", \"Transformar\").clicked { i = (i + 1) % FORMAS.len(); }",
+    ]);
+    ui.space(8.0);
+    ui.title("Dibujo libre");
+    ui.muted("canvas reserva un hueco y te da la lista de dibujo: polígonos rellenos, arcos, líneas y texto.");
+    let level = s.level;
+    let pal = *ui.palette();
+    ui.card("card-lienzo", |ui| {
+        ui.canvas("lienzo", Vec2::new(420.0, 150.0), |d, r| {
+            // A gauge: a track arc and a value arc.
+            let c = Vec2::new(r.x + 80.0, r.y + 80.0);
+            let (a0, sweep) = (0.75 * std::f32::consts::PI, 1.5 * std::f32::consts::PI);
+            d.arc(c, 56.0, a0, a0 + sweep, 12.0, pal[BORDER]);
+            d.arc(c, 56.0, a0, a0 + sweep * level, 12.0, pal[ACCENT]);
+            d.add_text(Vec2::new(c.x - 20.0, c.y - 12.0), 20.0, pal[TEXT], &format!("{:.0}%", level * 100.0));
+            // A polygon: a six-pointed star.
+            let s = Vec2::new(r.x + 300.0, r.y + 75.0);
+            let pts: Vec<Vec2> = (0..12)
+                .map(|i| {
+                    let rad = if i % 2 == 0 { 62.0 } else { 30.0 };
+                    let a = i as f32 / 12.0 * TAU - FRAC_PI_2;
+                    s + Vec2::new(a.cos(), a.sin()) * rad
+                })
+                .collect();
+            d.polygon(&pts, Color::hex(0xf5b83d));
+        });
+        ui.muted("El arco usa el valor del slider de «Controles».");
+    });
+    ui.code(&[
+        "ui.canvas(\"lienzo\", Vec2::new(420.0, 150.0), |d, r| {",
+        "    d.arc(centro, 56.0, inicio, fin, 12.0, color);      // arco grueso con extremos redondeados",
+        "    d.polygon(&puntos, Color::hex(0xf5b83d));          // cualquier forma, rellena",
+        "});",
     ]);
 }
 
@@ -457,6 +524,31 @@ pub fn entrada(ui: &mut Ui, s: &mut State) {
         "if ui.combobox(\"ciudad\", &CIUDADES, &mut ciudad, &mut busqueda, \"Busca…\", 260.0) {",
         "    // ciudad: Option<usize> con la elegida",
         "}",
+    ]);
+    ui.space(8.0);
+    ui.title("Teclado, selección y accesibilidad");
+    ui.card("card-teclado", |ui| {
+        ui.paragraph_muted(
+            "Tab recorre todos los controles (Mayús+Tab hacia atrás) y un anillo de foco salta de uno a otro. \
+             Enter o Espacio los activan; las flechas mueven sliders, perillas, estrellas y muestras. \
+             En los campos: arrastra o usa Mayús+flechas para seleccionar, Ctrl+A/C/X/V para el portapapeles; \
+             los métodos de entrada (tildes compuestas, chino, japonés…) muestran el texto en composición subrayado.",
+        );
+        ui.paragraph_muted(
+            "Para lectores de pantalla, la interfaz describe cada elemento (papel, nombre, valor, estado). \
+             Esta ventana lo publica con AccessKit: Orca en Linux, Narrador en Windows o VoiceOver en macOS pueden leerla y pulsar sus botones.",
+        );
+    });
+    ui.code(&[
+        "// El programa reenvía modificadores, atajos, portapapeles e IME:",
+        "ui.set_modifiers(Modifiers { shift, ctrl });",
+        "ui.key_pressed(Key::Copy);            // y después: if let Some(t) = ui.take_clipboard() { … }",
+        "ui.paste(&texto_del_portapapeles);",
+        "ui.ime_preedit(&texto_en_composicion); // y ui.ime_area() para colocar la ventana del IME",
+        "",
+        "// Accesibilidad: solo cuesta algo cuando un lector la pide",
+        "ui.set_accessibility(true);",
+        "for nodo in ui.access_nodes() { /* papel, nombre, valor, rectángulo */ }",
     ]);
 }
 

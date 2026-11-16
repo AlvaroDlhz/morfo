@@ -11,6 +11,16 @@ use crate::ui::{Node, Ui};
 pub(crate) enum Dir {
     Row,
     Column,
+    /// Cells of equal width, `n` per row, filled left to right.
+    Grid(u16),
+}
+
+/// Horizontal placement for [`Ui::align`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Start,
+    Center,
+    End,
 }
 
 pub(crate) struct Layout {
@@ -40,6 +50,60 @@ impl Ui {
         let gap = self.theme.gap;
         let (_, size) = self.group(id, Dir::Column, Vec2::ZERO, gap, None, f);
         self.advance(size);
+    }
+
+    /// Lays children out in a grid of `columns` equal-width cells, row by
+    /// row; each row is as tall as its tallest cell. Inside a cell,
+    /// [`available_width`](Self::available_width) is the cell's width.
+    pub fn grid(&mut self, columns: usize, f: impl FnOnce(&mut Ui)) {
+        let id = self.auto_id();
+        let (gap, cols) = (self.theme.gap, columns.clamp(1, u16::MAX as usize));
+        let cell = ((self.available_width() - gap * (cols - 1) as f32) / cols as f32).max(0.0);
+        self.next_width = Some(cell);
+        let (_, size) = self.group(id, Dir::Grid(cols as u16), Vec2::ZERO, gap, None, f);
+        self.advance(size);
+    }
+
+    /// Splits the available width into columns sized by `weights` (`[1.0,
+    /// 2.0]` makes the second twice as wide) and lays out column `i` with
+    /// `f(ui, i)`. Columns are top-aligned.
+    pub fn columns(&mut self, weights: &[f32], mut f: impl FnMut(&mut Ui, usize)) {
+        let id = self.auto_id();
+        let gap = self.theme.gap;
+        let avail = self.available_width();
+        let total: f32 = weights.iter().sum::<f32>().max(1e-3);
+        let free = (avail - gap * weights.len().saturating_sub(1) as f32).max(0.0);
+        let prev = self.sizes.get(&id).copied().unwrap_or(Vec2::ZERO);
+        let origin = self.peek(prev);
+        let (mut x, mut height) = (origin.x, 0.0f32);
+        for (i, w) in weights.iter().enumerate() {
+            let width = free * w / total;
+            self.next_width = Some(width);
+            let (_, size) = self.group(id.with(i as u64), Dir::Column, Vec2::ZERO, gap, Some(Vec2::new(x, origin.y)), |ui| f(ui, i));
+            height = height.max(size.y);
+            x += width + gap;
+        }
+        let size = Vec2::new(avail, height);
+        self.sizes.insert(id, size);
+        self.advance(size);
+    }
+
+    /// Places `f`'s content at the start, center or end of the available
+    /// width (it takes a frame to know the content's width).
+    pub fn align(&mut self, align: Align, f: impl FnOnce(&mut Ui)) {
+        let id = self.auto_id();
+        let avail = self.available_width();
+        let prev = self.sizes.get(&id).map_or(0.0, |s| s.x);
+        let factor = match align {
+            Align::Start => 0.0,
+            Align::Center => 0.5,
+            Align::End => 1.0,
+        };
+        let origin = self.peek(Vec2::ZERO) + Vec2::new(((avail - prev) * factor).max(0.0), 0.0);
+        self.next_width = Some(avail);
+        let gap = self.theme.gap;
+        let (_, size) = self.group(id, Dir::Column, Vec2::ZERO, gap, Some(origin), f);
+        self.advance(Vec2::new(avail, size.y));
     }
 
     /// Empty space along the current direction.
@@ -140,14 +204,28 @@ impl Ui {
         match l.dir {
             Dir::Column => Vec2::new(l.origin.x, l.origin.y + l.cursor),
             Dir::Row => Vec2::new(l.origin.x + l.cursor, l.origin.y + ((l.prev_cross - size.y) * 0.5).max(0.0)),
+            Dir::Grid(cols) => {
+                let col = (l.count % cols as u64) as f32;
+                Vec2::new(l.origin.x + col * (l.width + l.gap), l.origin.y + l.cursor)
+            }
         }
     }
 
     pub(crate) fn advance(&mut self, size: Vec2) {
         let l = self.layouts.last_mut().unwrap();
+        if let Dir::Grid(cols) = l.dir {
+            // `cross` is the height of the row being filled.
+            l.cross = l.cross.max(size.y);
+            l.count += 1;
+            if l.count.is_multiple_of(cols as u64) {
+                l.cursor += l.cross + l.gap;
+                l.cross = 0.0;
+            }
+            return;
+        }
         let (main, cross) = match l.dir {
-            Dir::Column => (size.y, size.x),
             Dir::Row => (size.x, size.y),
+            _ => (size.y, size.x),
         };
         l.cursor += main + l.gap;
         l.cross = l.cross.max(cross);
@@ -167,7 +245,9 @@ impl Ui {
         let prev = self.sizes.get(&id).copied().unwrap_or(Vec2::ZERO);
         let origin = origin.unwrap_or_else(|| self.peek(prev));
         let parent = self.layouts.last().unwrap();
-        let width = self.next_width.take().unwrap_or(parent.width - (origin.x - parent.origin.x) - 2.0 * inset.x).max(0.0);
+        // In a grid cell the room is the cell's width, wherever it starts.
+        let room = if matches!(parent.dir, Dir::Grid(_)) { parent.width } else { parent.width - (origin.x - parent.origin.x) };
+        let width = self.next_width.take().unwrap_or(room - 2.0 * inset.x).max(0.0);
         self.layouts.push(Layout {
             id,
             dir,
@@ -177,7 +257,7 @@ impl Ui {
             cross: 0.0,
             prev_cross: match dir {
                 Dir::Row => prev.y - 2.0 * inset.y,
-                Dir::Column => prev.x - 2.0 * inset.x,
+                _ => prev.x - 2.0 * inset.x,
             },
             count: 0,
             width,
@@ -188,6 +268,11 @@ impl Ui {
         let size = match dir {
             Dir::Row => Vec2::new(main, l.cross),
             Dir::Column => Vec2::new(l.cross, main),
+            Dir::Grid(cols) => {
+                let open_row = if !l.count.is_multiple_of(cols as u64) { l.cross + l.gap } else { 0.0 };
+                let used_cols = (l.count.min(cols as u64)) as f32;
+                Vec2::new(used_cols * l.width + (used_cols - 1.0).max(0.0) * l.gap, (l.cursor + open_row - l.gap).max(0.0))
+            }
         } + inset * 2.0;
         self.sizes.insert(id, size);
         (origin, size)

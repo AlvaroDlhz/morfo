@@ -4,6 +4,7 @@
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+use crate::a11y::Role;
 use crate::anim::SpringKind::{Smooth, Snappy};
 use crate::draw::DrawList;
 use crate::geom::{Color, Rect, Vec2};
@@ -161,6 +162,8 @@ pub(crate) struct Spec<'a> {
     pub busy: bool,
     /// Seconds the press must last to confirm (hold-to-confirm buttons).
     pub hold: Option<f32>,
+    /// On/off state, for buttons that stay pressed.
+    pub checked: Option<bool>,
 }
 
 pub(crate) fn metrics(font: f32, control: f32, pad: f32, size: Size) -> (f32, f32, f32) {
@@ -186,6 +189,11 @@ impl Ui {
         let target = self.alloc(Vec2::new(if spec.busy { h } else { natural }, h));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
+        if self.a11y_on {
+            let role = if spec.checked.is_some() { Role::ToggleButton } else { Role::Button };
+            let name = if spec.label.is_empty() { spec.icon.map(|i| format!("{i:?}")).unwrap_or_default() } else { spec.label.to_string() };
+            self.describe(id, role, &name, r, spec.busy.then_some("busy"), spec.checked);
+        }
         let interactive = !spec.busy;
         let (fill, fill_hover, stroke, ink) = variant_colors(&self.pal, spec.variant);
 
@@ -280,14 +288,14 @@ impl Ui {
     /// A round button with only an icon.
     pub fn icon_button(&mut self, key: &str, icon: Icon, variant: Variant, size: Size) -> Response {
         let id = self.id(key);
-        let spec = Spec { label: "", icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None };
+        let spec = Spec { label: "", icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None, checked: None };
         self.button_core(id, spec).0
     }
 
     /// A button with an icon before its label.
     pub fn button_icon(&mut self, key: &str, icon: Icon, label: &str, variant: Variant, size: Size) -> Response {
         let id = self.id(key);
-        let spec = Spec { label, icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None };
+        let spec = Spec { label, icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None, checked: None };
         self.button_core(id, spec).0
     }
 
@@ -300,7 +308,16 @@ impl Ui {
             Variant::Outline => (Variant::Outline, Variant::Solid),
             Variant::Ghost => (Variant::Ghost, Variant::Soft),
         };
-        let spec = Spec { label, icon: Some(Icon::Check), show_icon: *value, variant: if *value { on } else { off }, size, busy: false, hold: None };
+        let spec = Spec {
+            label,
+            icon: Some(Icon::Check),
+            show_icon: *value,
+            variant: if *value { on } else { off },
+            size,
+            busy: false,
+            hold: None,
+            checked: Some(*value),
+        };
         let clicked = self.button_core(id, spec).0.clicked;
         if clicked {
             *value = !*value;
@@ -312,7 +329,7 @@ impl Ui {
     /// with a spinner and ignores clicks; then it grows back.
     pub fn loading_button(&mut self, key: &str, label: &str, loading: bool, variant: Variant, size: Size) -> Response {
         let id = self.id(key);
-        let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: loading, hold: None };
+        let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: loading, hold: None, checked: None };
         self.button_core(id, spec).0
     }
 
@@ -321,7 +338,7 @@ impl Ui {
     /// early. Returns `true` once, the moment the hold completes.
     pub fn hold_button(&mut self, key: &str, label: &str, seconds: f32, variant: Variant, size: Size) -> bool {
         let id = self.id(key);
-        let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: Some(seconds) };
+        let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: Some(seconds), checked: None };
         self.button_core(id, spec).1
     }
 

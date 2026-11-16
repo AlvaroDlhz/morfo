@@ -85,8 +85,8 @@ impl Ui {
                 // Nothing underneath reacts while this is open; a press on
                 // the panel itself is swallowed, one outside closes it.
                 ui.blockers.push((1, screen));
-                ui.hit(id.with(1), panel);
-                dismissed = ui.hit(id.with(2), screen).clicked;
+                ui.hit_inert(id.with(1), panel);
+                dismissed = ui.hit_inert(id.with(2), screen).clicked;
             }
         });
         if shown && (self.dismiss || self.keys.contains(&Key::Escape)) {
@@ -168,6 +168,7 @@ impl Ui {
         let target = self.alloc(Vec2::new(width, (self.theme.control * 0.9).round()));
         let (r, life) = self.enter(id, target, Snappy);
         let hit = self.hit(id, r);
+        self.describe(id, crate::a11y::Role::MenuItem, label, r, None, None);
         let (hover, _, _) = self.drive3(id, hit.hovered || hit.held, hit.held, 0.0, Snappy);
         let a = self.alpha * life;
         self.draw.rect(r, 10.0, self.pal[TEXT].with_alpha(0.09 * hover * a));
@@ -352,6 +353,7 @@ impl Ui {
             let row_id = id.with(i as u64);
             // Rows only take clicks once they are (nearly) in place.
             let hit = if open && pc > 0.6 { Some(self.hit(row_id, r)) } else { None };
+            self.describe(row_id, crate::a11y::Role::Link, label, r, None, Some(*selected == i));
             if hit.as_ref().is_some_and(|h| h.clicked) {
                 chosen = true;
                 changed = *selected != i;

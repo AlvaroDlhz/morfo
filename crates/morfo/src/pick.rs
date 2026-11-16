@@ -56,6 +56,7 @@ impl Ui {
         let target = self.alloc(Vec2::new(width, (self.theme.control * 0.9).round()));
         let (r, life) = self.enter(id, target, Snappy);
         let hit = self.hit(id, r);
+        self.describe(id, crate::a11y::Role::ListItem, label, r, None, Some(checked));
         let (hover, _, mark) = self.drive3(id, hit.hovered || hit.held || highlighted, hit.held, checked as u8 as f32, Snappy);
         let a = self.alpha * life;
         let bg = if highlighted { self.pal[ACCENT].with_alpha(0.16) } else { self.pal[TEXT].with_alpha(0.08) };
@@ -82,6 +83,7 @@ impl Ui {
         let target = self.alloc(Vec2::new(widest + pad * 2.0 + 30.0, h));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
+        self.describe(id, crate::a11y::Role::ComboBox, key, r, options.get(*selected).copied(), None);
         if hit.clicked {
             self.open = if self.open == Some(id) { None } else { Some(id) };
         }

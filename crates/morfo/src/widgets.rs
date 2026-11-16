@@ -2,6 +2,7 @@
 //! it should look like) and lets its node's springs do the rest, so every
 //! change of state, variant, size, order or theme is a morph.
 
+use crate::a11y::Role;
 use crate::adapt::Prominence;
 use crate::anim::SpringKind::{self, Bouncy, Gentle, Smooth, Snappy};
 use crate::draw::DrawCmd;
@@ -102,6 +103,8 @@ impl Ui {
         let w = self.text.width(text, size);
         let target = self.alloc(Vec2::new(w, size * LINE_HEIGHT));
         let (r, life) = self.enter(id, target, Smooth);
+        let role = if size > self.theme.font * 1.1 { Role::Heading } else { Role::Label };
+        self.describe(id, role, text, r, None, None);
         self.draw.add_text(r.min(), size, self.pal[color].fade(self.alpha * life), text);
     }
 
@@ -122,6 +125,23 @@ impl Ui {
         let r = r.scaled(0.9 + 0.1 * life);
         self.draw.rect(r, radius, fill.fade(self.alpha * life));
         r
+    }
+
+    /// Space for drawing your own shapes: `f` receives the draw list and
+    /// the (animated) rectangle allotted, and can add rectangles, lines,
+    /// polygons, arcs and text with the [`DrawList`](crate::DrawList)
+    /// methods. Colors from [`Ui::theme`] keep it in step with the theme.
+    pub fn canvas(&mut self, key: &str, size: Vec2, f: impl FnOnce(&mut crate::DrawList, Rect)) {
+        let id = self.id(key);
+        let target = self.alloc(size);
+        let (r, _) = self.enter(id, target, Smooth);
+        f(&mut self.draw, r);
+    }
+
+    /// The current (animated) colors: background, surface, text, accent...
+    /// Index it with the constants in [`theme`](crate::theme).
+    pub fn palette(&self) -> &crate::theme::Palette {
+        &self.pal
     }
 
     /// A raised container as wide as the space available.
@@ -192,7 +212,7 @@ impl Ui {
     }
 
     pub(crate) fn button_id(&mut self, id: Id, label: &str, variant: Variant, size: Size) -> Response {
-        let spec = crate::buttons::Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: None };
+        let spec = crate::buttons::Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: None, checked: None };
         self.button_core(id, spec).0
     }
 
@@ -207,6 +227,7 @@ impl Ui {
             *value = !*value;
             self.profile.record(id, self.now);
         }
+        self.describe(id, Role::Switch, key, r, None, Some(*value));
         let (snappy, bouncy) = (self.steps[Snappy as usize], self.steps[Bouncy as usize]);
         let n = self.nodes.get_mut(&id).unwrap();
         let fresh = n.fresh();
@@ -252,9 +273,15 @@ impl Ui {
                 *value = v;
             }
         }
+        let step = self.arrows(id);
+        if step != 0.0 {
+            *value = (*value + step * 0.05).clamp(0.0, 1.0);
+            changed = true;
+        }
         if hit.released {
             self.profile.record(id, self.now);
         }
+        self.describe_level(id, Role::Slider, key, r, *value);
         let snappy = self.steps[Snappy as usize];
         let n = self.nodes.get_mut(&id).unwrap();
         let fresh = n.fresh();
@@ -328,6 +355,7 @@ impl Ui {
                 self.profile.record(seg_id, self.now);
             }
             let on = *selected == i;
+            self.describe(seg_id, Role::Tab, label, local.translate(r.min()), None, Some(on));
             if on {
                 sel_local = local;
             }

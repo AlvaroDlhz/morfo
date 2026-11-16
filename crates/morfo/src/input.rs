@@ -1,7 +1,9 @@
 //! Keyboard text entry and scrolling.
 
+use crate::a11y::Role;
 use crate::anim::SpringKind::{Smooth, Snappy};
 use crate::draw::DrawCmd;
+use crate::edit::{edit_text, selection, EditState};
 use crate::geom::{Rect, Vec2};
 use crate::theme::{ACCENT, BORDER, MUTED, RAISED, TEXT};
 use crate::ui::{Dir, Key, Ui, LINE_HEIGHT};
@@ -22,88 +24,84 @@ impl Ui {
     pub fn request_focus(&mut self, key: &str) {
         self.focus = Some(self.id(key));
         self.cursor = usize::MAX;
+        self.anchor = None;
         self.focus_claimed = true;
     }
 
     /// Single-line text field. Click to focus (the caret lands where you
-    /// click), Tab moves to the next field, Escape leaves it.
+    /// click), drag or use Shift with the arrows to select, Ctrl+A/C/X/V
+    /// (as [`Key`]s and [`Ui::paste`]) for the clipboard, Tab moves to the
+    /// next field, Escape leaves it. Text being composed with an input
+    /// method is shown underlined at the caret.
     pub fn text_field(&mut self, key: &str, value: &mut String, placeholder: &str, width: f32) -> TextEdit {
         let id = self.id(key);
         let (font, pad) = (self.theme.font, self.theme.pad * 0.7);
         let target = self.alloc(Vec2::new(width, self.theme.control));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
-        self.focusables.push(id);
+        self.text_ids.push(id);
         let inner = (r.w - pad * 2.0).max(1.0);
         // Long text scrolls so the caret stays in view.
         let scroll_for = |caret: f32| (caret - inner + 2.0).max(0.0);
         let mut out = TextEdit::default();
         let mut touched = false;
 
-        if self.input.pressed && self.active == Some(id) {
-            let was_focused = self.focus == Some(id);
-            self.focus = Some(id);
-            self.focus_claimed = true;
-            touched = true;
+        // Pointer: press places the caret (Shift extends), dragging selects.
+        let dragging = self.active == Some(id) && self.input.down && self.focus == Some(id);
+        if dragging {
             if let Some(p) = self.input.pointer {
-                let old = if was_focused { self.text.width(&value[..floor_boundary(value, self.cursor)], font) } else { 0.0 };
-                let x = p.x - r.x - pad + scroll_for(old);
-                let mut best = (f32::MAX, 0);
-                for i in value.char_indices().map(|(i, _)| i).chain([value.len()]) {
-                    let d = (self.text.width(&value[..i], font) - x).abs();
-                    if d < best.0 {
-                        best = (d, i);
-                    }
+                let was_focused = !self.focus_changed;
+                let current = if was_focused { floor_boundary(value, self.cursor) } else { 0 };
+                let scroll = if was_focused { scroll_for(self.text.width(&value[..current], font)) } else { 0.0 };
+                let pos = self.caret_at(value, p.x - r.x - pad + scroll, font);
+                if self.input.pressed {
+                    self.anchor = if self.mods.shift && was_focused { Some(self.anchor.unwrap_or(current)) } else { Some(pos) };
                 }
-                self.cursor = best.1;
+                self.cursor = pos;
+                touched = true;
             }
         }
 
         let mut focused = self.focus == Some(id);
         if focused {
-            let mut at = floor_boundary(value, self.cursor);
-            if !self.typed.is_empty() {
-                value.insert_str(at, &self.typed);
-                at += self.typed.len();
-                out.changed = true;
-                touched = true;
+            let mut st = EditState { cursor: self.cursor, anchor: self.anchor, shift: self.mods.shift, copied: None };
+            let e = edit_text(&mut st, &self.keys, &self.typed, &self.pasted, value, false, |v, _, k| match k {
+                Key::Home => Some(0),
+                Key::End => Some(v.len()),
+                _ => None,
+            });
+            self.cursor = st.cursor;
+            self.anchor = st.anchor;
+            if st.copied.is_some() {
+                self.clipboard_out = st.copied;
             }
-            for i in 0..self.keys.len() {
-                touched = true;
-                let before = value[..at].char_indices().next_back().map(|(j, _)| j);
-                let after = value[at..].chars().next().map(|c| at + c.len_utf8());
-                match self.keys[i] {
-                    Key::Backspace => {
-                        if let Some(j) = before {
-                            value.replace_range(j..at, "");
-                            at = j;
-                            out.changed = true;
-                        }
-                    }
-                    Key::Delete => {
-                        if let Some(j) = after {
-                            value.replace_range(at..j, "");
-                            out.changed = true;
-                        }
-                    }
-                    Key::Left => at = before.unwrap_or(at),
-                    Key::Right => at = after.unwrap_or(at),
-                    Key::Home => at = 0,
-                    Key::End => at = value.len(),
-                    Key::Enter => out.submitted = true,
-                    Key::Escape => {
-                        self.focus = None;
-                        focused = false;
-                    }
-                    Key::Tab | Key::Up | Key::Down => {}
-                }
+            out.changed = e.changed;
+            out.submitted = e.submitted;
+            touched |= e.touched;
+            if e.escaped {
+                self.focus = None;
+                focused = false;
             }
-            self.cursor = at;
         }
         out.focused = focused;
 
-        let caret = if focused { self.text.width(&value[..self.cursor.min(value.len())], font) } else { 0.0 };
+        // What is drawn: the text with any input-method composition at the caret.
+        let at = if focused { floor_boundary(value, self.cursor) } else { 0 };
+        let composing = focused && !self.preedit.is_empty();
+        self.scratch.clear();
+        if composing {
+            self.scratch.push_str(&value[..at]);
+            self.scratch.push_str(&self.preedit);
+            self.scratch.push_str(&value[at..]);
+        }
+        let shown: &str = if composing { &self.scratch } else { value };
+        let caret_byte = if composing { at + self.preedit.len() } else { at };
+        let caret = if focused { self.text.width(&shown[..caret_byte], font) } else { 0.0 };
         let scroll = scroll_for(caret);
+        let sel = if focused && !composing { selection(at, self.anchor.map(|a| floor_boundary(value, a))) } else { None };
+        let sel_x = sel.map(|(a, b)| (self.text.width(&value[..a], font) - scroll, self.text.width(&value[..b], font) - scroll));
+        let pre_x = composing.then(|| (self.text.width(&shown[..at], font) - scroll, caret - scroll));
+
         let (now, accent) = (self.now, self.pal[ACCENT]);
         let (snappy, smooth) = (self.steps[Snappy as usize], self.steps[Smooth as usize]);
         let idle_stroke = self.pal[BORDER].mix(self.pal[TEXT], if hit.hovered { 0.3 } else { 0.0 });
@@ -121,24 +119,46 @@ impl Ui {
         let a = self.alpha * life;
         self.draw.rect_stroked(r, self.theme.radius * 0.7, self.pal[RAISED].fade(a), stroke.fade(a), 1.0 + 0.6 * focus_t);
         let y = r.y + (r.h - font * LINE_HEIGHT) * 0.5;
-        self.draw.push(DrawCmd::PushClip { rect: Rect::new(r.x + pad - 1.0, r.y, inner + 2.0, r.h), radius: 0.0 });
-        if value.is_empty() {
-            self.draw.add_text(Vec2::new(r.x + pad, y), font, self.pal[MUTED].fade(a), placeholder);
+        let x0 = r.x + pad;
+        self.draw.push(DrawCmd::PushClip { rect: Rect::new(x0 - 1.0, r.y, inner + 2.0, r.h), radius: 0.0 });
+        if let Some((s0, s1)) = sel_x {
+            self.draw.rect(Rect::new(x0 + s0, y, s1 - s0, font * LINE_HEIGHT), 3.0, accent.with_alpha(0.3 * a));
+        }
+        if shown.is_empty() {
+            self.draw.add_text(Vec2::new(x0, y), font, self.pal[MUTED].fade(a), placeholder);
         } else {
-            self.draw.add_text(Vec2::new(r.x + pad - scroll, y), font, self.pal[TEXT].fade(a), value);
+            self.draw.add_text(Vec2::new(x0 - scroll, y), font, self.pal[TEXT].fade(a), shown);
+        }
+        if let Some((u0, u1)) = pre_x {
+            let uy = y + font * LINE_HEIGHT - 3.0;
+            self.draw.line(Vec2::new(x0 + u0, uy), Vec2::new(x0 + u1, uy), 1.5, accent.fade(a));
         }
         if focused {
             // The caret glides to its place, and blinks while idle.
             let phase = since.rem_euclid(1.0);
+            let half = font * 0.62;
             if phase < 0.55 {
-                let x = r.x + pad + caret_x;
-                let half = font * 0.62;
+                let x = x0 + caret_x;
                 self.draw.line(Vec2::new(x, r.center().y - half), Vec2::new(x, r.center().y + half), 1.6, accent.fade(a));
             }
             self.wake_at(now + if phase < 0.55 { 0.55 - phase } else { 1.0 - phase });
+            self.ime_rect = Some(Rect::new(x0 + caret_x, r.center().y - half, 2.0, half * 2.0));
         }
         self.draw.push(DrawCmd::PopClip);
+        self.describe(id, Role::TextInput, placeholder, r, Some(value.as_str()), None);
         out
+    }
+
+    /// Byte offset in `value` whose x position is closest to `x`.
+    pub(crate) fn caret_at(&self, value: &str, x: f32, font: f32) -> usize {
+        let mut best = (f32::MAX, 0);
+        for i in value.char_indices().map(|(i, _)| i).chain([value.len()]) {
+            let d = (self.text.width(&value[..i], font) - x).abs();
+            if d < best.0 {
+                best = (d, i);
+            }
+        }
+        best.1
     }
 
     /// A viewport of fixed `height` over content of any length. The wheel

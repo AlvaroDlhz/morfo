@@ -29,6 +29,7 @@ pub(crate) struct Morph {
 struct Snapshot {
     cmds: Vec<DrawCmd>,
     text: String,
+    points: Vec<Vec2>,
     bounds: Rect,
     /// Index in `cmds` of the background shape, if there is one.
     shell: Option<usize>,
@@ -40,13 +41,22 @@ impl Snapshot {
     fn capture(&mut self, cmds: &[DrawCmd], list: &DrawList, bounds: Rect) {
         self.cmds.clear();
         self.text.clear();
+        self.points.clear();
         self.bounds = bounds;
         for &cmd in cmds {
             let mut cmd = cmd;
-            if let DrawCmd::Text { start, len, .. } = &mut cmd {
-                let s = list.text(*start, *len);
-                *start = self.text.len() as u32;
-                self.text.push_str(s);
+            match &mut cmd {
+                DrawCmd::Text { start, len, .. } => {
+                    let s = list.text(*start, *len);
+                    *start = self.text.len() as u32;
+                    self.text.push_str(s);
+                }
+                DrawCmd::Polygon { start, len, .. } => {
+                    let pts = list.points(*start, *len);
+                    *start = self.points.len() as u32;
+                    self.points.extend_from_slice(pts);
+                }
+                _ => {}
             }
             self.cmds.push(cmd);
         }
@@ -153,12 +163,24 @@ impl Ui {
                         self.draw.add_text_styled(pos, size, color, text, mono);
                     }
                 }
+                DrawCmd::Polygon { start, len, color } => {
+                    let pts = &st.was.points[start as usize..(start + len) as usize];
+                    let mapped: Vec<Vec2> = pts.iter().map(|&p| map_point(p, st.was.bounds, r)).collect();
+                    self.draw.polygon(&mapped, color);
+                }
                 cmd => emit(&mut self.draw, cmd),
             }
         }
         for (i, &cmd) in new.iter().enumerate() {
-            if Some(i) != st.now.shell {
-                emit(&mut self.draw, map(cmd, target, r, fade_in));
+            if Some(i) == st.now.shell {
+                continue;
+            }
+            match map(cmd, target, r, fade_in) {
+                DrawCmd::Polygon { start, len, color } => {
+                    let mapped: Vec<Vec2> = self.draw.points(start, len).iter().map(|&p| map_point(p, target, r)).collect();
+                    self.draw.polygon(&mapped, color);
+                }
+                cmd => emit(&mut self.draw, cmd),
             }
         }
         self.morph_buf = new;
@@ -187,6 +209,12 @@ fn find_shell(cmds: &[DrawCmd], bounds: Rect) -> Option<usize> {
     best
 }
 
+/// Places point `v` of rectangle `from` at the same relative spot in `to`.
+fn map_point(v: Vec2, from: Rect, to: Rect) -> Vec2 {
+    let (sx, sy) = (to.w / from.w.max(1.0), to.h / from.h.max(1.0));
+    Vec2::new(to.x + (v.x - from.x) * sx, to.y + (v.y - from.y) * sy)
+}
+
 /// Places `cmd`, drawn inside `from`, proportionally inside `to`, with its
 /// opacity multiplied by `fade`.
 fn map(cmd: DrawCmd, from: Rect, to: Rect, fade: f32) -> DrawCmd {
@@ -213,6 +241,8 @@ fn map(cmd: DrawCmd, from: Rect, to: Rect, fade: f32) -> DrawCmd {
         }
         DrawCmd::Line { from: a, to: b, width, color } => DrawCmd::Line { from: p(a), to: p(b), width: width * s, color: color.fade(fade) },
         DrawCmd::PushClip { rect, radius } => DrawCmd::PushClip { rect: r(rect), radius: radius * s },
+        // Points are remapped by the caller, which owns them.
+        DrawCmd::Polygon { start, len, color } => DrawCmd::Polygon { start, len, color: color.fade(fade) },
         other => other,
     }
 }
@@ -258,6 +288,7 @@ fn emit(list: &mut DrawList, cmd: DrawCmd) {
         DrawCmd::Shadow { color, .. } => color.a > 0.004,
         DrawCmd::Text { color, size, .. } => color.a > 0.002 && size > 0.5,
         DrawCmd::Line { color, .. } => color.a > 0.002,
+        DrawCmd::Polygon { color, .. } => color.a > 0.002,
         _ => true,
     };
     if visible {

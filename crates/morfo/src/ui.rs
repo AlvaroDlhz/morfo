@@ -59,6 +59,18 @@ pub enum Key {
     Tab,
     Up,
     Down,
+    /// Activates the focused control, like Enter.
+    Space,
+    SelectAll,
+    Copy,
+    Cut,
+}
+
+/// Modifier keys held down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
 }
 
 /// What happened to an interactive element this frame.
@@ -221,6 +233,24 @@ pub struct Ui {
     /// Inner width for the next group, overriding what the parent leaves.
     pub(crate) next_width: Option<f32>,
     pub(crate) morph_buf: Vec<DrawCmd>,
+    pub(crate) mods: Modifiers,
+    /// Other end of the selection in the focused text field (byte offset).
+    pub(crate) anchor: Option<usize>,
+    pub(crate) pasted: String,
+    pub(crate) clipboard_out: Option<String>,
+    pub(crate) preedit: String,
+    pub(crate) ime_rect: Option<Rect>,
+    /// The focus was last moved with the keyboard: show the focus ring.
+    pub(crate) keyboard_focus: bool,
+    pub(crate) focus_rect: Option<Rect>,
+    /// Focus before this frame's press (text fields place their caret from it).
+    pub(crate) focus_before: Option<Id>,
+    /// The focus moved to a new element during this frame's press.
+    pub(crate) focus_changed: bool,
+    pub(crate) text_ids: Vec<Id>,
+    pub(crate) access: Vec<crate::a11y::AccessNode>,
+    pub(crate) access_clicks: Vec<Id>,
+    pub(crate) a11y_on: bool,
 }
 
 impl Ui {
@@ -266,6 +296,20 @@ impl Ui {
             strings: IdMap::default(),
             next_width: None,
             morph_buf: Vec::new(),
+            mods: Modifiers::default(),
+            anchor: None,
+            pasted: String::new(),
+            clipboard_out: None,
+            preedit: String::new(),
+            ime_rect: None,
+            keyboard_focus: false,
+            focus_rect: None,
+            focus_before: None,
+            focus_changed: false,
+            text_ids: Vec::new(),
+            access: Vec::new(),
+            access_clicks: Vec::new(),
+            a11y_on: false,
         }
     }
 
@@ -345,7 +389,38 @@ impl Ui {
 
     /// Whether a text field has the keyboard focus.
     pub fn has_focus(&self) -> bool {
-        self.focus.is_some()
+        self.focus.is_some_and(|f| self.text_ids.contains(&f))
+    }
+
+    /// Modifier keys currently held (Shift extends text selections).
+    pub fn set_modifiers(&mut self, mods: Modifiers) {
+        self.mods = mods;
+    }
+
+    /// Text pasted from the clipboard. Unlike [`text_input`](Self::text_input)
+    /// it keeps line breaks, for multi-line fields.
+    pub fn paste(&mut self, text: &str) {
+        self.pasted.extend(text.chars().filter(|&c| c != '\r'));
+    }
+
+    /// Text the user copied or cut this frame; put it on the system
+    /// clipboard.
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.clipboard_out.take()
+    }
+
+    /// Text being composed with an input method (accents, CJK...), shown
+    /// at the caret until it is committed through
+    /// [`text_input`](Self::text_input). Empty to clear it.
+    pub fn ime_preedit(&mut self, text: &str) {
+        self.preedit.clear();
+        self.preedit.push_str(text);
+    }
+
+    /// Where the caret of the focused text field is, so the host can place
+    /// the input method's candidate window next to it.
+    pub fn ime_area(&self) -> Option<Rect> {
+        self.ime_rect
     }
 
     /// Size of the area being laid out, in logical pixels.
@@ -381,6 +456,11 @@ impl Ui {
         std::mem::swap(&mut self.blockers, &mut self.blockers_prev);
         self.blockers.clear();
         self.focusables.clear();
+        self.text_ids.clear();
+        self.access.clear();
+        self.ime_rect = None;
+        self.focus_rect = None;
+        self.focus_changed = false;
         self.focus_claimed = false;
         self.dismiss = false;
         self.wake = f64::INFINITY;
@@ -406,23 +486,41 @@ impl Ui {
     /// Ends the frame. Paint [`draw_list`](Self::draw_list) afterwards.
     pub fn end(&mut self) -> Frame {
         self.draw_toasts();
+        self.draw_focus_ring();
         self.draw.flatten();
         // Keyboard focus: a press outside every field drops it, Tab cycles it.
         if self.input.pressed && !self.focus_claimed {
             self.focus = None;
         }
         if self.keys.contains(&Key::Tab) && !self.focusables.is_empty() {
+            let n = self.focusables.len();
             let at = self.focus.and_then(|f| self.focusables.iter().position(|&x| x == f));
-            self.focus = Some(self.focusables[at.map_or(0, |i| (i + 1) % self.focusables.len())]);
+            let next = match (at, self.mods.shift) {
+                (Some(i), false) => (i + 1) % n,
+                (Some(i), true) => (i + n - 1) % n,
+                (None, false) => 0,
+                (None, true) => n - 1,
+            };
+            self.focus = Some(self.focusables[next]);
             self.cursor = usize::MAX;
+            self.anchor = None;
+            self.keyboard_focus = true;
         }
         // State changed by input is only declared on the next frame.
-        let again = self.input.pressed || self.input.released || self.input.wheel != 0.0 || !self.keys.is_empty() || !self.typed.is_empty();
+        let again = self.input.pressed
+            || self.input.released
+            || self.input.wheel != 0.0
+            || !self.keys.is_empty()
+            || !self.typed.is_empty()
+            || !self.pasted.is_empty()
+            || !self.access_clicks.is_empty();
         self.input.pressed = false;
         self.input.released = false;
         self.input.wheel = 0.0;
         self.keys.clear();
         self.typed.clear();
+        self.pasted.clear();
+        self.access_clicks.clear();
         if !self.input.down {
             self.active = None;
         }
@@ -494,7 +592,37 @@ impl Ui {
         })
     }
 
+    /// Pointer and keyboard interaction for an element at `rect`. The
+    /// element becomes focusable: Tab reaches it, and Enter or Space
+    /// activate it while it has the focus.
     pub(crate) fn hit(&mut self, id: Id, rect: Rect) -> Hit {
+        self.focusables.push(id);
+        let mut hit = self.hit_inert(id, rect);
+        if self.input.pressed && self.active == Some(id) && self.focus != Some(id) {
+            self.focus_before = self.focus;
+            self.focus_changed = true;
+            self.focus = Some(id);
+            self.anchor = None;
+            self.keyboard_focus = false;
+        }
+        if self.active == Some(id) {
+            self.focus_claimed = true;
+        }
+        if self.focus == Some(id) {
+            self.focus_rect = Some(rect);
+            if self.keys.iter().any(|k| matches!(k, Key::Enter | Key::Space)) {
+                hit.clicked = true;
+            }
+        }
+        if self.access_clicks.contains(&id) {
+            hit.clicked = true;
+        }
+        hit
+    }
+
+    /// Like [`hit`](Self::hit), for surfaces that only catch the pointer
+    /// (panel backgrounds): never focusable.
+    pub(crate) fn hit_inert(&mut self, id: Id, rect: Rect) -> Hit {
         let over = self.pointer_in(rect);
         if self.input.pressed && over && self.active.is_none() {
             self.active = Some(id);
@@ -506,5 +634,25 @@ impl Ui {
             clicked: mine && over && self.input.released,
             released: mine && self.input.released,
         }
+    }
+
+    /// Ring around the element focused with the keyboard. It is one shape
+    /// that springs from element to element as the focus moves.
+    fn draw_focus_ring(&mut self) {
+        let ring = Id::new("morfo-focus-ring");
+        let target = match (self.keyboard_focus, self.focus_rect, self.focus) {
+            (true, Some(r), Some(f)) if !self.text_ids.contains(&f) => r.inset(-4.0),
+            _ => return,
+        };
+        let (k, life) = (self.steps[SpringKind::Bouncy as usize], self.steps[SpringKind::Smooth as usize]);
+        let n = self.nodes.entry(ring).or_insert_with(Node::new);
+        self.animating |= n.begin(self.frame, target, &k, &life);
+        let (r, a) = (n.rect.get(), n.life.get().clamp(0.0, 1.0));
+        let below = self.draw.set_layer(2);
+        let cull = self.draw.cull.take();
+        let radius = (r.h * 0.5).min(18.0);
+        self.draw.rect_stroked(r, radius, Color::TRANSPARENT, self.pal[crate::theme::ACCENT].with_alpha(0.9 * a), 2.0);
+        self.draw.cull = cull;
+        self.draw.set_layer(below);
     }
 }

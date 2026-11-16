@@ -4,23 +4,13 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::fmt::Write;
 
+use crate::a11y::Role;
 use crate::anim::SpringKind::{Bouncy, Gentle, Smooth, Snappy};
 use crate::buttons::{draw_icon, Icon};
 use crate::draw::{DrawCmd, DrawList};
 use crate::geom::{Color, Rect, Vec2};
 use crate::theme::{ACCENT, BORDER, MUTED, RAISED, SURFACE, TEXT};
-use crate::ui::{Node, Ui, LINE_HEIGHT};
-
-/// Strokes an arc of a circle from angle `a0` to `a1` (radians, clockwise
-/// from the positive x axis, as screen coordinates go).
-fn arc(list: &mut DrawList, c: Vec2, radius: f32, a0: f32, a1: f32, width: f32, color: Color) {
-    let steps = (((a1 - a0).abs() * radius / 5.0).ceil() as usize).max(1);
-    let at = |a: f32| c + Vec2::new(a.cos(), a.sin()) * radius;
-    for i in 0..steps {
-        let (t0, t1) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
-        list.line(at(a0 + (a1 - a0) * t0), at(a0 + (a1 - a0) * t1), width, color);
-    }
-}
+use crate::ui::{Key, Node, Ui, LINE_HEIGHT};
 
 /// A round white thumb with a soft shadow, as sliders use.
 fn thumb(list: &mut DrawList, c: Vec2, d: f32, a: f32) {
@@ -29,17 +19,18 @@ fn thumb(list: &mut DrawList, c: Vec2, d: f32, a: f32) {
     list.rect(r, d * 0.5, Color::WHITE.fade(a));
 }
 
-/// A star filled with `color`: thick spokes and a disc under the outline.
+/// A five-pointed star filled with `color`, centered on `c` in a
+/// `size`-pixel square (the same shape as [`Icon::Star`]'s outline).
 fn filled_star(list: &mut DrawList, c: Vec2, size: f32, color: Color) {
     let k = size * 0.5;
-    let center = c + Vec2::new(0.0, 0.06 * k);
-    let disc = 0.46 * k;
-    list.rect(Rect::new(center.x - disc, center.y - disc, disc * 2.0, disc * 2.0), disc, color);
-    for i in 0..5 {
-        let a = i as f32 / 5.0 * TAU - FRAC_PI_2;
-        let tip = center + Vec2::new(a.cos(), a.sin()) * (0.62 * k);
-        list.line(center, tip, 0.34 * k, color);
-    }
+    let pts: Vec<Vec2> = (0..10)
+        .map(|i| {
+            let r = if i % 2 == 0 { 0.88 } else { 0.38 };
+            let a = i as f32 / 10.0 * TAU - FRAC_PI_2;
+            c + Vec2::new(a.cos() * r * k, (a.sin() * r + 0.06) * k)
+        })
+        .collect();
+    list.polygon(&pts, color);
 }
 
 impl Ui {
@@ -81,8 +72,22 @@ impl Ui {
             n.latch = false;
         }
         let upper = n.open;
+        // Arrow keys move the thumb grabbed last.
+        let step = self.arrows(id) * 0.05;
+        if step != 0.0 {
+            if upper {
+                *hi = (*hi + step).clamp(*lo, 1.0);
+            } else {
+                *lo = (*lo + step).clamp(0.0, *hi);
+            }
+            changed = true;
+        }
         if hit.released {
             self.profile.record(id, self.now);
+        }
+        if self.a11y_on {
+            let value = format!("{:.0} % – {:.0} %", *lo * 100.0, *hi * 100.0);
+            self.describe(id, Role::Slider, key, r, Some(&value), None);
         }
         let snappy = self.steps[Snappy as usize];
         let n = self.nodes.get_mut(&id).unwrap();
@@ -139,6 +144,8 @@ impl Ui {
         if wheel != 0.0 {
             *value = (*value + wheel / 600.0).clamp(0.0, 1.0);
         }
+        *value = (*value + self.arrows(id) * 0.05).clamp(0.0, 1.0);
+        self.describe_level(id, Role::Slider, label, dial, *value);
         let changed = *value != before;
         if hit.released || wheel != 0.0 {
             self.profile.record(id, self.now);
@@ -156,9 +163,9 @@ impl Ui {
         let c = dial.center();
         let ring = d * 0.42;
         let w = 4.0 + 1.5 * hover;
-        arc(&mut self.draw, c, ring, START, START + SWEEP, w, self.pal[BORDER].fade(a));
+        self.draw.arc(c, ring, START, START + SWEEP, w, self.pal[BORDER].fade(a));
         if t > 0.001 {
-            arc(&mut self.draw, c, ring, START, START + SWEEP * t, w, self.pal[ACCENT].fade(a));
+            self.draw.arc(c, ring, START, START + SWEEP * t, w, self.pal[ACCENT].fade(a));
         }
         let cap = d * (0.56 - 0.03 * press) * life;
         let cap_r = Rect::new(c.x - cap * 0.5, c.y - cap * 0.5, cap, cap);
@@ -194,6 +201,15 @@ impl Ui {
             .filter(|_| hit.hovered || hit.held)
             .map(|p| (((p.x - r.x) / (s + gap)).floor().clamp(0.0, count as f32 - 1.0)) as u8 + 1);
         let mut changed = false;
+        let step = self.arrows(id) as i32;
+        if step != 0 {
+            *value = (*value as i32 + step).clamp(0, count as i32) as u8;
+            changed = true;
+        }
+        if self.a11y_on {
+            let v = format!("{} / {}", *value, count);
+            self.describe(id, Role::Slider, key, r, Some(&v), None);
+        }
         if let (true, Some(n)) = (hit.clicked, under) {
             *value = if *value == n { 0 } else { n };
             changed = true;
@@ -240,6 +256,16 @@ impl Ui {
             let cell = Rect::new(r.x + 4.0 + i as f32 * (d + gap), r.y + 4.0, d, d);
             let sid = id.with(i as u64);
             let hit = self.hit(sid, cell);
+            self.describe(sid, Role::RadioButton, key, cell, None, Some(*selected == i));
+            if self.focus == Some(sid) && self.arrows(sid) != 0.0 {
+                // Arrows move the selection, and the focus with it.
+                let to = (*selected as i32 + self.arrows(sid) as i32).clamp(0, colors.len() as i32 - 1) as usize;
+                if to != *selected {
+                    *selected = to;
+                    changed = true;
+                    self.focus = Some(id.with(to as u64));
+                }
+            }
             if hit.clicked && *selected != i {
                 *selected = i;
                 changed = true;
@@ -282,8 +308,25 @@ impl Ui {
             changed = v != *value;
             *value = v;
         }
+        if self.focus == Some(id) {
+            for k in &self.keys {
+                let d = match k {
+                    Key::Left => Vec2::new(-0.05, 0.0),
+                    Key::Right => Vec2::new(0.05, 0.0),
+                    Key::Up => Vec2::new(0.0, -0.05),
+                    Key::Down => Vec2::new(0.0, 0.05),
+                    _ => continue,
+                };
+                *value = Vec2::new((value.x + d.x).clamp(0.0, 1.0), (value.y + d.y).clamp(0.0, 1.0));
+                changed = true;
+            }
+        }
         if hit.released {
             self.profile.record(id, self.now);
+        }
+        if self.a11y_on {
+            let v = format!("x {:.2}, y {:.2}", value.x, value.y);
+            self.describe(id, Role::Slider, key, r, Some(&v), None);
         }
         let snappy = self.steps[Snappy as usize];
         let n = self.nodes.get_mut(&id).unwrap();

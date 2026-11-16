@@ -74,6 +74,7 @@ impl Ui {
             let hid = id.child("header").with(c as u64);
             self.enter(hid, cell, Snappy);
             let hit = self.hit(hid, cell);
+            self.describe(hid, crate::a11y::Role::Button, title, cell, None, sort.map(|(s, _)| s == c));
             if hit.clicked {
                 *sort = match *sort {
                     Some((s, false)) if s == c => Some((c, true)),
@@ -102,6 +103,7 @@ impl Ui {
             let target = Rect::new(r.x, r.y + row_h * (pos + 1) as f32, r.w, row_h);
             let (rr, rlife) = self.enter(rid, target, Smooth);
             let hit = self.hit(rid, rr);
+            self.describe(rid, crate::a11y::Role::Row, rows[i].first().copied().unwrap_or(""), rr, None, None);
             if hit.clicked {
                 clicked = Some(i);
                 self.profile.record(rid, self.now);
@@ -188,6 +190,7 @@ impl Ui {
             };
             let target = Rect::new(r.x, r.y + pos as f32 * step, r.w, row_h);
             let (rr, rl) = self.enter(rid, target, Smooth);
+            self.describe(rid, crate::a11y::Role::ListItem, text, rr, None, None);
             if dragging && i == from {
                 let y = pointer.map_or(rr.y, |p| p.y - grab);
                 let held = Rect::new(r.x, y, r.w, row_h);

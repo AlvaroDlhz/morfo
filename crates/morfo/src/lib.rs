@@ -24,6 +24,7 @@
 //! ```
 #![forbid(unsafe_code)]
 
+mod a11y;
 pub mod adapt;
 pub mod anim;
 mod buttons;
@@ -31,6 +32,7 @@ mod chrome;
 mod controls;
 mod data;
 pub mod draw;
+mod edit;
 pub mod geom;
 pub mod id;
 mod input;
@@ -44,6 +46,7 @@ pub mod theme;
 pub mod ui;
 mod widgets;
 
+pub use a11y::{AccessNode, Role};
 pub use adapt::{Profile, Prominence};
 pub use anim::{Animatable, Motion, Spring, SpringKind, SpringStep};
 pub use buttons::Icon;
@@ -52,6 +55,7 @@ pub use draw::{DrawCmd, DrawList};
 pub use geom::{Color, Rect, Vec2};
 pub use id::Id;
 pub use input::TextEdit;
+pub use layout::Align;
 pub use theme::Theme;
-pub use ui::{ApproxText, Frame, Key, Response, TextMeasure, Ui};
+pub use ui::{ApproxText, Frame, Key, Modifiers, Response, TextMeasure, Ui};
 pub use widgets::{Size, Variant};

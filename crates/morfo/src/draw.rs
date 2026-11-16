@@ -44,6 +44,13 @@ pub enum DrawCmd {
         width: f32,
         color: Color,
     },
+    /// Filled polygon (any shape, non-zero winding). Resolve its points
+    /// with [`DrawList::points`].
+    Polygon {
+        start: u32,
+        len: u32,
+        color: Color,
+    },
     /// Clip everything until the matching `PopClip` to a rounded rectangle.
     PushClip {
         rect: Rect,
@@ -60,6 +67,7 @@ pub struct DrawList {
     layers: [Vec<DrawCmd>; LAYERS],
     layer: usize,
     text: String,
+    points: Vec<Vec2>,
     /// Vertical band outside which primitives are dropped (scroll areas).
     pub(crate) cull: Option<Rect>,
 }
@@ -70,6 +78,7 @@ impl DrawList {
             l.clear();
         }
         self.text.clear();
+        self.points.clear();
         self.layer = 0;
         self.cull = None;
     }
@@ -125,9 +134,63 @@ impl DrawList {
             DrawCmd::Shadow { rect, blur, offset, .. } => (rect.y - blur, rect.bottom() + blur + offset.y),
             DrawCmd::Text { pos, size, .. } => (pos.y, pos.y + size * 1.4),
             DrawCmd::Line { from, to, width, .. } => (from.y.min(to.y) - width, from.y.max(to.y) + width),
+            DrawCmd::Polygon { start, len, .. } => bounds_y(self.points(start, len)),
             _ => return false,
         };
         y1 < c.y || y0 > c.bottom()
+    }
+    /// The points of a [`DrawCmd::Polygon`].
+    pub fn points(&self, start: u32, len: u32) -> &[Vec2] {
+        &self.points[start as usize..(start + len) as usize]
+    }
+    /// All the polygon points of this frame (what `Polygon` commands index into).
+    pub fn point_arena(&self) -> &[Vec2] {
+        &self.points
+    }
+    /// A filled polygon through `pts`.
+    pub fn polygon(&mut self, pts: &[Vec2], color: Color) {
+        if color.a <= 0.002 || pts.len() < 3 {
+            return;
+        }
+        let start = self.points.len() as u32;
+        self.points.extend_from_slice(pts);
+        let cmd = DrawCmd::Polygon { start, len: pts.len() as u32, color };
+        if self.hidden(&cmd) {
+            self.points.truncate(start as usize);
+        } else {
+            self.layers[self.layer].push(cmd);
+        }
+    }
+    /// A thick arc of a circle with round ends, from angle `a0` to `a1`
+    /// (radians, clockwise from the positive x axis as screen y goes down).
+    pub fn arc(&mut self, c: Vec2, radius: f32, a0: f32, a1: f32, width: f32, color: Color) {
+        let (a0, a1) = if a1 < a0 { (a1, a0) } else { (a0, a1) };
+        if a1 - a0 < 1e-4 {
+            return;
+        }
+        let half = width * 0.5;
+        let at = |a: f32, r: f32| c + Vec2::new(a.cos(), a.sin()) * r;
+        let steps = (((a1 - a0) * (radius + half) / 3.0).ceil() as usize).clamp(2, 256);
+        let cap = 8;
+        let mut pts = Vec::with_capacity(2 * (steps + cap) + 2);
+        for i in 0..=steps {
+            pts.push(at(a0 + (a1 - a0) * i as f32 / steps as f32, radius + half));
+        }
+        // Round end at a1: half a circle from the outer edge to the inner one.
+        let end = at(a1, radius);
+        for i in 1..cap {
+            let t = a1 + std::f32::consts::PI * i as f32 / cap as f32;
+            pts.push(end + Vec2::new(t.cos(), t.sin()) * half);
+        }
+        for i in (0..=steps).rev() {
+            pts.push(at(a0 + (a1 - a0) * i as f32 / steps as f32, radius - half));
+        }
+        let start = at(a0, radius);
+        for i in 1..cap {
+            let t = a0 + std::f32::consts::PI + std::f32::consts::PI * i as f32 / cap as f32;
+            pts.push(start + Vec2::new(t.cos(), t.sin()) * half);
+        }
+        self.polygon(&pts, color);
     }
     pub fn push(&mut self, cmd: DrawCmd) {
         if !self.hidden(&cmd) {
@@ -177,4 +240,9 @@ impl DrawList {
             }
         }
     }
+}
+
+/// Vertical extent of a set of points.
+pub(crate) fn bounds_y(pts: &[Vec2]) -> (f32, f32) {
+    pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.y), hi.max(p.y)))
 }

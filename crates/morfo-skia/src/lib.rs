@@ -7,11 +7,12 @@
 //! and glyph bitmaps are cached between frames.
 
 use std::collections::HashMap;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use ab_glyph::{point, Font, FontArc, GlyphId, PxScale, ScaleFont};
 use morfo::ui::LINE_HEIGHT;
-use morfo::{Color, DrawCmd, DrawList, Rect, TextMeasure};
-use tiny_skia::{LineCap, Paint, PathBuilder, Pixmap, PixmapMut, Stroke, Transform};
+use morfo::{Color, DrawCmd, DrawList, Rect, TextMeasure, Vec2};
+use tiny_skia::{Pixmap, PixmapMut};
 
 pub use ab_glyph::InvalidFont;
 pub use tiny_skia;
@@ -67,6 +68,7 @@ pub struct Renderer {
     /// Last frame's commands and text, to repaint only what changed.
     prev: Vec<DrawCmd>,
     prev_text: String,
+    prev_points: Vec<Vec2>,
     prev_target: Option<Target>,
     threads: usize,
 }
@@ -80,6 +82,7 @@ impl Renderer {
             glyphs: HashMap::new(),
             prev: Vec::new(),
             prev_text: String::new(),
+            prev_points: Vec::new(),
             prev_target: None,
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()).min(8),
         })
@@ -135,6 +138,8 @@ impl Renderer {
         self.prev.extend_from_slice(list.commands());
         self.prev_text.clear();
         self.prev_text.push_str(list.text_arena());
+        self.prev_points.clear();
+        self.prev_points.extend_from_slice(list.point_arena());
         self.prev_target = Some(target);
         let (first, end) = rows.filter(|(a, b)| b > a)?;
 
@@ -186,19 +191,23 @@ impl Renderer {
                     && mono == mono2
                     && self.prev_text[start as usize..(start + len) as usize] == *list.text(start2, len2)
             }
+            (DrawCmd::Polygon { start, len, color }, DrawCmd::Polygon { start: start2, len: len2, color: color2 }) => {
+                color == color2 && self.prev_points[start as usize..(start + len) as usize] == *list.points(start2, len2)
+            }
             _ => a == b,
         };
+        let (old_pts, new_pts) = (&self.prev_points[..], list.point_arena());
         let mut span: Option<(f32, f32)> = None;
-        let mut add = |cmd: &DrawCmd| {
-            if let Some((a, b)) = extent(cmd) {
+        let mut add = |cmd: &DrawCmd, pts: &[Vec2]| {
+            if let Some((a, b)) = extent(cmd, pts) {
                 span = Some(span.map_or((a, b), |(x, y)| (x.min(a), y.max(b))));
             }
         };
         if old.len() == new.len() {
             for (a, b) in old.iter().zip(new) {
                 if !same(a, b) {
-                    add(a);
-                    add(b);
+                    add(a, old_pts);
+                    add(b, new_pts);
                 }
             }
         } else {
@@ -207,7 +216,8 @@ impl Renderer {
             let shorter = old.len().min(new.len());
             let head = (0..shorter).take_while(|&i| same(&old[i], &new[i])).count();
             let tail = (0..shorter - head).take_while(|&i| same(&old[old.len() - 1 - i], &new[new.len() - 1 - i])).count();
-            old[head..old.len() - tail].iter().chain(&new[head..new.len() - tail]).for_each(&mut add);
+            old[head..old.len() - tail].iter().for_each(|c| add(c, old_pts));
+            new[head..new.len() - tail].iter().for_each(|c| add(c, new_pts));
         }
         span
     }
@@ -217,7 +227,7 @@ impl Renderer {
     fn prepare_glyphs(&mut self, list: &DrawList, scale: f32, first: u32, end: u32) {
         for cmd in list.commands() {
             let DrawCmd::Text { pos, size, start, len, mono, .. } = *cmd else { continue };
-            if !touches(cmd, scale, first, end) {
+            if !touches(cmd, list.point_arena(), scale, first, end) {
                 continue;
             }
             let mono = mono && self.mono.is_some();
@@ -282,7 +292,7 @@ impl Renderer {
                 }
                 None => (first, end),
             };
-            if y1 <= y0 || !touches(cmd, scale, y0, y1) {
+            if y1 <= y0 || !touches(cmd, list.point_arena(), scale, y0, y1) {
                 continue;
             }
             if let DrawCmd::Text { pos, size, color, start, len, mono } = *cmd {
@@ -335,18 +345,13 @@ impl Renderer {
                         t * t
                     });
                 }
+                DrawCmd::Polygon { start, len, color } => {
+                    fill_polygon(band, width, y0, y1, list.points(start, len), scale, color);
+                }
                 DrawCmd::Line { from, to, width: stroke_width, color } => {
-                    let Some(mut band) = PixmapMut::from_bytes(band, width, y1 - y0) else { continue };
-                    let ts = Transform::from_scale(scale, scale).post_translate(0.0, -(y0 as f32));
-                    let mut pb = PathBuilder::new();
-                    pb.move_to(from.x, from.y);
-                    pb.line_to(to.x, to.y);
-                    let Some(path) = pb.finish() else { continue };
-                    let s = Stroke { width: stroke_width, line_cap: LineCap::Round, ..Stroke::default() };
-                    let mut p = Paint::default();
-                    p.set_color(sk_color(color));
-                    p.anti_alias = true;
-                    band.stroke_path(&path, &p, &s, ts, None);
+                    // A stroke with round ends is a capsule; filling it with the
+                    // row-by-row rasterizer keeps partial repaints exact.
+                    fill_polygon(band, width, y0, y1, &capsule(from, to, stroke_width * 0.5), scale, color);
                 }
                 _ => {}
             }
@@ -436,8 +441,12 @@ fn walk(font: &FontArc, px: PxScale, text: &str, x: f32, mut f: impl FnMut(Glyph
 
 /// Vertical extent of a command in logical pixels, with a safety margin.
 /// `None` for commands that paint nothing themselves.
-fn extent(cmd: &DrawCmd) -> Option<(f32, f32)> {
+fn extent(cmd: &DrawCmd, points: &[Vec2]) -> Option<(f32, f32)> {
     Some(match *cmd {
+        DrawCmd::Polygon { start, len, .. } => {
+            let (y0, y1) = points[start as usize..(start + len) as usize].iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.y), b.max(p.y)));
+            (y0 - 1.0, y1 + 1.0)
+        }
         DrawCmd::Rect { rect, stroke_width, .. } => (rect.y - stroke_width - 1.0, rect.bottom() + stroke_width + 1.0),
         DrawCmd::Shadow { rect, blur, offset, .. } => (rect.y + offset.y - blur - 1.0, rect.bottom() + offset.y + blur + 1.0),
         DrawCmd::Text { pos, size, .. } => (pos.y - size * 0.4, pos.y + size * 1.8),
@@ -449,8 +458,8 @@ fn extent(cmd: &DrawCmd) -> Option<(f32, f32)> {
 }
 
 /// Whether `cmd` can paint anything in device rows `first..end`.
-fn touches(cmd: &DrawCmd, scale: f32, first: u32, end: u32) -> bool {
-    extent(cmd).is_none_or(|(y0, y1)| (y1 * scale).ceil() + 1.0 >= first as f32 && (y0 * scale).floor() - 1.0 <= end as f32)
+fn touches(cmd: &DrawCmd, points: &[Vec2], scale: f32, first: u32, end: u32) -> bool {
+    extent(cmd, points).is_none_or(|(y0, y1)| (y1 * scale).ceil() + 1.0 >= first as f32 && (y0 * scale).floor() - 1.0 <= end as f32)
 }
 
 fn sk_color(c: Color) -> tiny_skia::Color {
@@ -570,6 +579,97 @@ fn paint(
         for x in mid1..x_end {
             blend(&mut line[x as usize * 4..][..4], r, g, b, (alpha * coverage(x as f32 + 0.5, y) + 0.5) as u32);
         }
+    }
+}
+
+/// Fills a polygon (non-zero winding) into the rows `y0..y1` held by `band`.
+///
+/// Each row is computed on its own, from four sub-scanlines with exact
+/// horizontal coverage, so the pixels never depend on how the frame is cut
+/// into bands: partial repaints match full ones exactly.
+fn fill_polygon(band: &mut [u8], width: u32, y0: u32, y1: u32, pts: &[Vec2], scale: f32, color: Color) {
+    const SUB: usize = 4;
+    if pts.len() < 3 {
+        return;
+    }
+    let dev: Vec<(f32, f32)> = pts.iter().map(|p| (p.x * scale, p.y * scale)).collect();
+    let (mut min_y, mut max_y, mut min_x, mut max_x) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for &(x, y) in &dev {
+        (min_y, max_y, min_x, max_x) = (min_y.min(y), max_y.max(y), min_x.min(x), max_x.max(x));
+    }
+    let row_start = (min_y.floor().max(0.0) as u32).max(y0);
+    let row_end = (max_y.ceil().max(0.0) as u32).min(y1);
+    let x_start = (min_x.floor().max(0.0) as usize).min(width as usize);
+    let x_end = (max_x.ceil().max(0.0) as usize).min(width as usize);
+    if row_start >= row_end || x_start >= x_end {
+        return;
+    }
+    let [r, g, b, _] = color.to_rgba8();
+    let alpha = color.a.clamp(0.0, 1.0) * 255.0;
+    let stride = width as usize * 4;
+    let mut cover = vec![0.0f32; x_end - x_start];
+    let mut crossings: Vec<(f32, i32)> = Vec::with_capacity(16);
+    for row in row_start..row_end {
+        cover.iter_mut().for_each(|c| *c = 0.0);
+        for s in 0..SUB {
+            let sy = row as f32 + (s as f32 + 0.5) / SUB as f32;
+            crossings.clear();
+            for i in 0..dev.len() {
+                let (a, b) = (dev[i], dev[(i + 1) % dev.len()]);
+                if (a.1 <= sy) != (b.1 <= sy) {
+                    let x = a.0 + (sy - a.1) * (b.0 - a.0) / (b.1 - a.1);
+                    crossings.push((x, if b.1 > a.1 { 1 } else { -1 }));
+                }
+            }
+            crossings.sort_by(|p, q| p.0.total_cmp(&q.0));
+            let (mut winding, mut open) = (0, 0.0);
+            for &(x, dir) in &crossings {
+                let before = winding;
+                winding += dir;
+                if before == 0 && winding != 0 {
+                    open = x;
+                } else if before != 0 && winding == 0 {
+                    add_span(&mut cover, x_start, open, x, 1.0 / SUB as f32);
+                }
+            }
+        }
+        let line = &mut band[(row - y0) as usize * stride..][..stride];
+        for (i, &c) in cover.iter().enumerate() {
+            if c > 0.0 {
+                let x = x_start + i;
+                blend(&mut line[x * 4..][..4], r, g, b, (alpha * c.min(1.0) + 0.5) as u32);
+            }
+        }
+    }
+}
+
+/// The outline of a stroke from `a` to `b` with round ends of radius `r`.
+fn capsule(a: Vec2, b: Vec2, r: f32) -> Vec<Vec2> {
+    const CAP: usize = 8;
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let base = if dx == 0.0 && dy == 0.0 { 0.0 } else { dy.atan2(dx) };
+    let mut pts = Vec::with_capacity(2 * CAP + 2);
+    for (c, from) in [(b, base - FRAC_PI_2), (a, base + FRAC_PI_2)] {
+        for i in 0..=CAP {
+            let t = from + PI * i as f32 / CAP as f32;
+            pts.push(Vec2::new(c.x + t.cos() * r, c.y + t.sin() * r));
+        }
+    }
+    pts
+}
+
+/// Adds `weight` times the coverage of the horizontal span `x0..x1` to
+/// `cover` (whose first cell is pixel column `origin`).
+fn add_span(cover: &mut [f32], origin: usize, x0: f32, x1: f32, weight: f32) {
+    let (x0, x1) = (x0 - origin as f32, x1 - origin as f32);
+    let (x0, x1) = (x0.max(0.0), x1.min(cover.len() as f32));
+    if x1 <= x0 {
+        return;
+    }
+    let (first, last) = (x0.floor() as usize, (x1.ceil() as usize).min(cover.len()));
+    for (i, c) in cover.iter_mut().enumerate().take(last).skip(first) {
+        let (p0, p1) = (i as f32, i as f32 + 1.0);
+        *c += (x1.min(p1) - x0.max(p0)).max(0.0) * weight;
     }
 }
 

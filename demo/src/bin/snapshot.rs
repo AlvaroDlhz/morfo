@@ -449,6 +449,38 @@ fn main() {
     s.save("22-destacado");
     s.go(5);
 
+    // Richer layout, free drawing and keyboard focus.
+    s.go(4);
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-5000.0);
+    s.settle();
+    s.ui.pointer_left();
+    s.settle();
+    s.save("23-rejilla-y-columnas");
+    s.go(5);
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-600.0);
+    s.settle();
+    s.ui.pointer_left();
+    s.settle();
+    s.save("24-dibujo-libre");
+    s.go(1);
+    for _ in 0..4 {
+        s.ui.key_pressed(Key::Tab);
+        s.frame();
+    }
+    s.frames(6);
+    s.save("25-foco-viajando");
+    s.settle();
+    s.save("26-foco-con-teclado");
+    s.ui.key_pressed(Key::Escape);
+    s.ui.pointer_moved(Vec2::new(450.0, 300.0));
+    s.ui.pointer_pressed();
+    s.frame();
+    s.ui.pointer_released();
+    s.ui.pointer_left();
+    s.settle();
+
     // The incremental painter must leave exactly the pixels a full repaint would.
     s.save("16-forma");
     let mut fresh = morfo_demo::renderer();
@@ -456,6 +488,15 @@ fn main() {
     fresh.render(s.ui.draw_list(), &mut full, SCALE, s.ui.background());
     let differing = full.data().chunks(4).zip(s.pixmap.data().chunks(4)).filter(|(a, b)| a != b).count();
     let worst = full.data().iter().zip(s.pixmap.data()).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+    if differing > 0 {
+        let w = full.width() as usize;
+        for (i, (a, b)) in full.data().chunks(4).zip(s.pixmap.data().chunks(4)).enumerate() {
+            if a != b {
+                eprintln!("pixel ({}, {}): full {:?} vs incremental {:?}", i % w, i / w, a, b);
+            }
+        }
+        full.save_png("out/zz-full.png").unwrap();
+    }
     // Edges cut by a repainted band may round one level differently.
     assert!(worst <= 2, "incremental and full repaint differ by {worst}/255 in {differing} pixels");
     println!("incremental repaint vs full repaint: {differing} pixels differ, by at most {worst}/255");

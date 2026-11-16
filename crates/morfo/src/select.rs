@@ -3,6 +3,7 @@
 
 use std::fmt::Write;
 
+use crate::a11y::Role;
 use crate::anim::SpringKind::{Bouncy, Smooth, Snappy};
 use crate::draw::DrawCmd;
 use crate::geom::{Rect, Vec2};
@@ -21,6 +22,7 @@ impl Ui {
         let target = self.alloc(Vec2::new(BOX + 10.0 + self.text.width(label, font), (font * LINE_HEIGHT).max(BOX)));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
+        self.describe(id, Role::CheckBox, label, r, None, Some(*value));
         if hit.clicked {
             *value = !*value;
             self.profile.record(id, self.now);
@@ -53,6 +55,7 @@ impl Ui {
         let target = self.alloc(Vec2::new(BOX + 10.0 + self.text.width(label, font), (font * LINE_HEIGHT).max(BOX)));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
+        self.describe(id, Role::RadioButton, label, r, None, Some(*value == this));
         let picked = hit.clicked && *value != this;
         if picked {
             *value = this;
@@ -99,6 +102,7 @@ impl Ui {
             let enabled = if delta < 0 { *value > min } else { *value < max };
             self.enter(button, area, Snappy);
             let hit = self.hit(button, area);
+            self.describe(button, Role::Button, if delta < 0 { "−" } else { "+" }, area, None, None);
             if hit.clicked && enabled {
                 *value += delta;
                 changed = true;
@@ -143,6 +147,7 @@ impl Ui {
             let target = self.alloc(Vec2::new(self.available_width(), self.theme.control));
             let (r, life) = self.enter(header, target, Smooth);
             let hit = self.hit(header, r);
+            self.describe(header, Role::Button, title, r, None, Some(*open == Some(i)));
             if hit.clicked {
                 *open = if *open == Some(i) { None } else { Some(i) };
                 self.profile.record(header, self.now);

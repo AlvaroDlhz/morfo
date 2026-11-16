@@ -980,3 +980,221 @@ fn text_area_ignores_the_caret_of_another_field() {
     ui.text_input("x");
     frame(&mut ui, &mut t, &mut build);
 }
+
+// ----- selection, clipboard, input methods, keyboard and accessibility ----------
+
+use morfo::{Modifiers, Role};
+
+#[test]
+fn text_selection_clipboard_and_paste() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut line, mut notes) = (String::from("hola mundo"), String::new());
+    let mut build = |ui: &mut Ui| {
+        ui.text_field("line", &mut line, "", 300.0);
+        ui.text_area("notes", &mut notes, "", Vec2::new(300.0, 100.0));
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let field = ui.id("line");
+    click(&mut ui, &mut t, field, &mut build);
+    // End, then Shift+Left ×5 selects "mundo"; copy it.
+    ui.key_pressed(Key::End);
+    ui.set_modifiers(Modifiers { shift: true, ctrl: false });
+    for _ in 0..5 {
+        ui.key_pressed(Key::Left);
+    }
+    frame(&mut ui, &mut t, &mut build);
+    ui.set_modifiers(Modifiers::default());
+    ui.key_pressed(Key::Copy);
+    frame(&mut ui, &mut t, &mut build);
+    assert_eq!(ui.take_clipboard().as_deref(), Some("mundo"));
+    // Typing replaces the selection.
+    ui.text_input("gente");
+    frame(&mut ui, &mut t, &mut build);
+    // Pasting into the multi-line field keeps the line break.
+    let area = ui.id("notes");
+    click(&mut ui, &mut t, area, &mut build);
+    ui.paste("uno\ndos");
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::SelectAll);
+    ui.key_pressed(Key::Cut);
+    frame(&mut ui, &mut t, &mut build);
+    let cut = ui.take_clipboard();
+    drop(build);
+    assert_eq!(line, "hola gente");
+    assert_eq!(cut.as_deref(), Some("uno\ndos"));
+    assert_eq!(notes, "");
+}
+
+#[test]
+fn dragging_selects_text() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut text = String::from("abcdefghij");
+    let mut build = |ui: &mut Ui| {
+        ui.text_field("f", &mut text, "", 300.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let r = ui.rect_of(ui.id("f")).unwrap();
+    let x0 = r.x + 12.6; // the field's padding
+                         // ApproxText: 8.1 px per character at the default size.
+    drag(&mut ui, &mut t, Vec2::new(x0 + 8.1 * 2.0, r.center().y), Vec2::new(x0 + 8.1 * 5.0, r.center().y), &mut build);
+    ui.key_pressed(Key::Copy);
+    frame(&mut ui, &mut t, &mut build);
+    assert_eq!(ui.take_clipboard().as_deref(), Some("cde"));
+}
+
+#[test]
+fn input_method_composition() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut text = String::from("a");
+    let mut build = |ui: &mut Ui| {
+        ui.text_field("f", &mut text, "", 300.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let field = ui.id("f");
+    click(&mut ui, &mut t, field, &mut build);
+    // While composing, the text is shown but not committed.
+    ui.ime_preedit("´");
+    frame(&mut ui, &mut t, &mut build);
+    assert!(texts(&ui).contains(&"a´".to_string()));
+    assert!(ui.ime_area().is_some());
+    ui.ime_preedit("");
+    ui.text_input("é");
+    frame(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(text, "aé");
+}
+
+#[test]
+fn every_control_works_from_the_keyboard() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut clicks, mut on, mut level) = (0, false, 0.5f32);
+    let mut build = |ui: &mut Ui| {
+        if ui.button("b", "Go").clicked {
+            clicks += 1;
+        }
+        ui.toggle("t", &mut on);
+        ui.slider("s", &mut level, 200.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    // Tab reaches the button; Enter presses it.
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, &mut build);
+    assert_eq!(ui.focused(), Some(ui.id("b")));
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, &mut build);
+    // A focus ring is drawn around it (an unfilled, stroked rectangle).
+    let ring =
+        ui.draw_list().commands().iter().any(|c| matches!(c, DrawCmd::Rect { fill, stroke_width, .. } if fill.a == 0.0 && *stroke_width == 2.0));
+    assert!(ring);
+    // Tab to the switch, Space flips it; Tab to the slider, arrows move it.
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Space);
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Right);
+    ui.key_pressed(Key::Right);
+    frame(&mut ui, &mut t, &mut build);
+    // Shift+Tab goes back.
+    ui.set_modifiers(Modifiers { shift: true, ctrl: false });
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, &mut build);
+    let back = ui.focused();
+    drop(build);
+    assert_eq!((clicks, on), (1, true));
+    assert!((level - 0.6).abs() < 1e-4, "{level}");
+    assert_eq!(back, Some(ui.id("t")));
+}
+
+#[test]
+fn accessibility_description_and_actions() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut clicks, mut on) = (0, true);
+    let mut build = |ui: &mut Ui| {
+        ui.heading("Settings");
+        if ui.button("save", "Save").clicked {
+            clicks += 1;
+        }
+        ui.checkbox("c", "Notify me", &mut on);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    // Off by default: nothing is described, nothing costs.
+    assert!(ui.access_nodes().is_empty());
+    ui.set_accessibility(true);
+    frame(&mut ui, &mut t, &mut build);
+    let nodes = ui.access_nodes().to_vec();
+    let find = |role: Role| nodes.iter().find(|n| n.role == role).unwrap().clone();
+    assert_eq!(find(Role::Heading).label, "Settings");
+    assert_eq!(find(Role::Button).label, "Save");
+    assert_eq!(find(Role::CheckBox).checked, Some(true));
+    // A screen reader's "click" activates the element.
+    let save = ui.id("save");
+    ui.access_click(save);
+    frame(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(clicks, 1);
+}
+
+// ----- richer layout and filled shapes --------------------------------------------
+
+use morfo::Align;
+
+#[test]
+fn grid_columns_and_alignment() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.grid(3, |ui| {
+            for i in 0..5 {
+                let w = ui.available_width();
+                ui.surface(&format!("cell{i}"), Vec2::new(w, 20.0 + i as f32 * 10.0), 4.0, Color::WHITE);
+            }
+        });
+        ui.columns(&[1.0, 3.0], |ui, i| {
+            let w = ui.available_width();
+            ui.surface(&format!("col{i}"), Vec2::new(w, 30.0), 4.0, Color::WHITE);
+        });
+        ui.align(Align::End, |ui| {
+            ui.button("end", "End");
+        });
+        ui.align(Align::Center, |ui| {
+            ui.button("mid", "Mid");
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let r = |k: &str| ui.rect_of(ui.id(k)).unwrap();
+    // Three equal cells per row, rows as tall as their tallest cell.
+    assert_eq!(r("cell0").y, r("cell2").y);
+    assert!((r("cell0").w - r("cell1").w).abs() < 0.01);
+    assert!(r("cell1").x > r("cell0").right() && r("cell2").x > r("cell1").right());
+    assert_eq!(r("cell3").x, r("cell0").x);
+    assert!(r("cell3").y >= r("cell2").bottom());
+    // Weighted columns: the second is three times as wide, both top-aligned.
+    assert!((r("col1").w / r("col0").w - 3.0).abs() < 0.01);
+    assert_eq!(r("col0").y, r("col1").y);
+    assert!(r("col0").y >= r("cell4").bottom());
+    // Aligned to the end of the row, and centered.
+    let right = VIEW.x - 27.0;
+    assert!((r("end").right() - right).abs() < 1.0, "{:?}", r("end"));
+    assert!((r("mid").center().x - VIEW.x * 0.5).abs() < 1.0, "{:?}", r("mid"));
+}
+
+#[test]
+fn filled_polygons_and_arcs() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut stars, mut v) = (3u8, 0.5f32);
+    let mut build = |ui: &mut Ui| {
+        ui.rating("r", &mut stars, 5);
+        ui.knob("k", "Knob", &mut v);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let list = ui.draw_list();
+    let polys: Vec<usize> = list
+        .commands()
+        .iter()
+        .filter_map(|c| if let DrawCmd::Polygon { start, len, .. } = *c { Some(list.points(start, len).len()) } else { None })
+        .collect();
+    // Three filled stars (10 points each) and the knob's two arcs.
+    assert_eq!(polys.iter().filter(|&&n| n == 10).count(), 3);
+    assert!(polys.iter().filter(|&&n| n > 20).count() >= 2);
+}

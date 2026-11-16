@@ -1,7 +1,9 @@
 //! Wrapped text: paragraphs and a multi-line text area.
 
+use crate::a11y::Role;
 use crate::anim::SpringKind::{Smooth, Snappy};
 use crate::draw::DrawCmd;
+use crate::edit::{edit_text, selection, EditState};
 use crate::geom::{Rect, Vec2};
 use crate::input::{floor_boundary, TextEdit};
 use crate::theme::{ACCENT, BORDER, MUTED, RAISED, TEXT};
@@ -87,6 +89,7 @@ impl Ui {
         let lh = font * LINE_HEIGHT;
         let target = self.alloc(Vec2::new(width, lines.len() as f32 * lh));
         let (r, life) = self.enter(id, target, Smooth);
+        self.describe(id, Role::Label, text, r, None, None);
         let ink = self.pal[color].fade(self.alpha * life);
         for (i, l) in lines.iter().enumerate() {
             self.draw.add_text(Vec2::new(r.x, r.y + i as f32 * lh), font, ink, &text[l.start..l.end]);
@@ -95,7 +98,8 @@ impl Ui {
 
     /// Multi-line text field: wraps as you type, Enter starts a new line,
     /// the arrows move through lines, and it scrolls to keep the caret in
-    /// view (the wheel scrolls it too).
+    /// view (the wheel scrolls it too). Selection, clipboard and input
+    /// methods work as in [`text_field`](Self::text_field).
     pub fn text_area(&mut self, key: &str, value: &mut String, placeholder: &str, size: Vec2) -> TextEdit {
         let id = self.id(key);
         let (font, pad) = (self.theme.font, self.theme.pad * 0.7);
@@ -103,7 +107,7 @@ impl Ui {
         let target = self.alloc(size);
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
-        self.focusables.push(id);
+        self.text_ids.push(id);
         let inner = Rect::new(r.x + pad, r.y + pad * 0.6, (r.w - pad * 2.0).max(1.0), (r.h - pad * 1.2).max(1.0));
         let mut lines = Vec::new();
         wrap(value, inner.w, font, &*self.text, &mut lines);
@@ -111,74 +115,60 @@ impl Ui {
         let mut out = TextEdit::default();
         let mut touched = false;
 
-        if self.input.pressed && self.active == Some(id) {
-            self.focus = Some(id);
-            self.focus_claimed = true;
-            touched = true;
+        // Pointer: press places the caret (Shift extends), dragging selects.
+        if self.active == Some(id) && self.input.down && self.focus == Some(id) {
             if let Some(p) = self.input.pointer {
                 let li = (((p.y - inner.y + offset) / lh).floor().max(0.0) as usize).min(lines.len() - 1);
-                self.cursor = closest(value, lines[li], p.x - inner.x, font, &*self.text);
+                let pos = closest(value, lines[li], p.x - inner.x, font, &*self.text);
+                if self.input.pressed {
+                    let was_focused = !self.focus_changed;
+                    let current = floor_boundary(value, self.cursor);
+                    self.anchor = if self.mods.shift && was_focused { Some(self.anchor.unwrap_or(current)) } else { Some(pos) };
+                }
+                self.cursor = pos;
+                touched = true;
             }
         }
+
         let mut focused = self.focus == Some(id);
         if focused {
-            let mut at = floor_boundary(value, self.cursor);
-            if !self.typed.is_empty() {
-                value.insert_str(at, &self.typed);
-                at += self.typed.len();
-                out.changed = true;
-                touched = true;
+            let width = inner.w;
+            let m = &*self.text;
+            let mut st = EditState { cursor: self.cursor, anchor: self.anchor, shift: self.mods.shift, copied: None };
+            let e = edit_text(&mut st, &self.keys, &self.typed, &self.pasted, value, true, |v, at, k| {
+                let mut ls = Vec::new();
+                wrap(v, width, font, m, &mut ls);
+                let li = line_of(&ls, at);
+                let line = ls[li];
+                match k {
+                    Key::Home => Some(line.start),
+                    Key::End => Some(line.end),
+                    Key::Up | Key::Down => {
+                        let x = m.width(&v[line.start..at.min(line.end)], font);
+                        let to = if k == Key::Up { li.checked_sub(1) } else { Some(li + 1).filter(|&n| n < ls.len()) };
+                        Some(match to {
+                            Some(n) => closest(v, ls[n], x, font, m),
+                            None if k == Key::Up => 0,
+                            None => v.len(),
+                        })
+                    }
+                    _ => None,
+                }
+            });
+            self.cursor = st.cursor;
+            self.anchor = st.anchor;
+            if st.copied.is_some() {
+                self.clipboard_out = st.copied;
+            }
+            out.changed = e.changed;
+            touched |= e.touched;
+            if e.escaped {
+                self.focus = None;
+                focused = false;
+            }
+            if out.changed {
                 wrap(value, inner.w, font, &*self.text, &mut lines);
             }
-            for i in 0..self.keys.len() {
-                touched = true;
-                let before = value[..at].char_indices().next_back().map(|(j, _)| j);
-                let after = value[at..].chars().next().map(|c| at + c.len_utf8());
-                let line = lines[line_of(&lines, at)];
-                match self.keys[i] {
-                    Key::Backspace => {
-                        if let Some(j) = before {
-                            value.replace_range(j..at, "");
-                            at = j;
-                            out.changed = true;
-                        }
-                    }
-                    Key::Delete => {
-                        if let Some(j) = after {
-                            value.replace_range(at..j, "");
-                            out.changed = true;
-                        }
-                    }
-                    Key::Enter => {
-                        value.insert(at, '\n');
-                        at += 1;
-                        out.changed = true;
-                    }
-                    Key::Left => at = before.unwrap_or(at),
-                    Key::Right => at = after.unwrap_or(at),
-                    Key::Home => at = line.start,
-                    Key::End => at = line.end,
-                    Key::Up | Key::Down => {
-                        let li = line_of(&lines, at);
-                        let x = self.text.width(&value[line.start..at.min(line.end)], font);
-                        let to = if self.keys[i] == Key::Up { li.checked_sub(1) } else { Some(li + 1).filter(|&n| n < lines.len()) };
-                        match to {
-                            Some(n) => at = closest(value, lines[n], x, font, &*self.text),
-                            None if self.keys[i] == Key::Up => at = 0,
-                            None => at = value.len(),
-                        }
-                    }
-                    Key::Escape => {
-                        self.focus = None;
-                        focused = false;
-                    }
-                    Key::Tab => {}
-                }
-                if out.changed {
-                    wrap(value, inner.w, font, &*self.text, &mut lines);
-                }
-            }
-            self.cursor = at;
         }
         out.focused = focused;
 
@@ -198,6 +188,7 @@ impl Ui {
         let offset = offset.clamp(0.0, max);
         let cl = lines[caret_line];
         let caret_x = self.text.width(&value[cl.start..caret.clamp(cl.start, cl.end)], font);
+        let sel = if focused { selection(caret, self.anchor.map(|a| floor_boundary(value, a))) } else { None };
 
         let now = self.now;
         let accent = self.pal[ACCENT];
@@ -225,23 +216,46 @@ impl Ui {
         let visible = (inner.h / lh).ceil() as usize + 2;
         for (i, l) in lines.iter().enumerate().skip(first).take(visible) {
             let y = inner.y + i as f32 * lh - off;
+            if let Some((s0, s1)) = sel {
+                // The part of the selection on this line (a little past its
+                // end when it continues on the next one).
+                let (a0, a1) = (s0.max(l.start), s1.min(l.end));
+                if s0 <= l.end && s1 >= l.start && (a0 < a1 || s1 > l.end) {
+                    let x0 = self.text.width(&value[l.start..a0.min(l.end)], font);
+                    let x1 = self.text.width(&value[l.start..a1.max(a0)], font) + if s1 > l.end { 6.0 } else { 0.0 };
+                    self.draw.rect(Rect::new(inner.x + x0, y, x1 - x0, lh), 3.0, accent.with_alpha(0.3 * a));
+                }
+            }
             self.draw.add_text(Vec2::new(inner.x, y), font, self.pal[TEXT].fade(a), &value[l.start..l.end]);
         }
+        self.draw.push(DrawCmd::PopClip);
         if focused {
+            let y = inner.y + caret_line as f32 * lh - off;
+            let x = inner.x + caret_x;
             let phase = since.rem_euclid(1.0);
             if phase < 0.55 {
-                let y = inner.y + caret_line as f32 * lh - off;
-                let x = inner.x + caret_x;
                 self.draw.line(Vec2::new(x, y + lh * 0.12), Vec2::new(x, y + lh * 0.88), 1.6, accent.fade(a));
             }
             self.wake_at(now + if phase < 0.55 { 0.55 - phase } else { 1.0 - phase });
+            self.ime_rect = Some(Rect::new(x, y, 2.0, lh));
+            if !self.preedit.is_empty() {
+                // Text being composed floats just below the caret.
+                let w = self.text.width(&self.preedit, font) + 16.0;
+                let bubble = Rect::new(x, y + lh + 2.0, w, lh + 8.0);
+                self.draw.rect_stroked(bubble, 8.0, self.pal[RAISED].fade(a), accent.fade(a), 1.0);
+                let pre = std::mem::take(&mut self.preedit);
+                self.draw.add_text(Vec2::new(bubble.x + 8.0, bubble.y + 4.0), font, self.pal[TEXT].fade(a), &pre);
+                let uy = bubble.y + 4.0 + lh - 3.0;
+                self.draw.line(Vec2::new(bubble.x + 8.0, uy), Vec2::new(bubble.right() - 8.0, uy), 1.5, accent.fade(a));
+                self.preedit = pre;
+            }
         }
-        self.draw.push(DrawCmd::PopClip);
         if max > 0.0 {
             let thumb = (inner.h * inner.h / content).max(20.0);
             let y = inner.y + (inner.h - thumb) * (off / max).clamp(0.0, 1.0);
             self.draw.rect(Rect::new(r.right() - 6.0, y, 3.0, thumb), 2.0, self.pal[MUTED].with_alpha(0.4 * a));
         }
+        self.describe(id, Role::MultilineTextInput, placeholder, r, Some(value.as_str()), None);
         out
     }
 }
