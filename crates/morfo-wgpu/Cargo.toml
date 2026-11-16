@@ -12,7 +12,7 @@ categories = ["gui", "rendering"]
 
 [dependencies]
 morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
-wgpu = "23"
+wgpu = "30"
 ab_glyph = "0.2"
 bytemuck = { version = "1", features = ["derive"] }
 
