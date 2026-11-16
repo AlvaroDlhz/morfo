@@ -9,6 +9,10 @@ programa pueden acabar viendo interfaces distintas.
 | ![inicio](docs/inicio.png) | ![indice](docs/indice.png) |
 | **Interfaz ya adaptada al uso** | **Tipos de botón y sus variantes** |
 | ![adaptado](docs/adaptado.png) | ![botones](docs/botones.png) |
+| **Controles, con otro color de acento** | **Paleta de comandos (Ctrl+K)** |
+| ![controles](docs/controles.png) | ![paleta](docs/paleta.png) |
+| **Tabla ordenada por precio** | |
+| ![tabla](docs/tabla.png) | |
 | **Diálogo que crece desde su botón** | **Controles de selección** |
 | ![dialogo](docs/dialogo.png) | ![seleccion](docs/seleccion.png) |
 | **Un botón mutando en tarjeta** | **Mutado según el uso** |
@@ -75,17 +79,18 @@ Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
 
 | Grupo | Componentes |
 | --- | --- |
-| Texto | `label`, `muted`, `title`, `heading`, `text` (tamaño libre), `code` |
+| Texto | `label`, `muted`, `title`, `heading`, `text` (tamaño libre), `code`, `paragraph` y `paragraph_muted` (se ajustan al ancho) |
 | Botones | `button`, `button_with`, `icon_button` (solo icono), `button_icon` (icono y texto), `toggle_button` (se queda pulsado), `loading_button` (se encoge en un indicador mientras carga), `hold_button` (mantener para confirmar). Todos con las variantes `Solid`, `Soft`, `Outline`, `Ghost` y los tamaños `Sm`, `Md`, `Lg` |
 | Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
-| Controles | `toggle`, `slider`, `progress`, `segmented` |
+| Controles | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (rango con dos manijas), `knob` (perilla), `xy_pad` (pad de dos ejes), `rating` (estrellas), `swatches` (muestras de color) |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
 | Cajas | `row`, `column`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `presence` |
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `close` |
 | Navegación | `side_nav` (índice oculto en el borde izquierdo que se despliega al acercar el cursor) |
 | Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
-| Entrada | `text_field` (foco, cursor, Tab, Enter, Escape) |
-| Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions` |
+| Entrada | `text_field` (foco, cursor, Tab, Enter, Escape), `text_area` (multilínea con ajuste de línea y scroll), `select` (desplegable), `combobox` (campo con sugerencias, sin distinguir tildes) |
+| Datos | `table` (ordenable por columnas; las filas viajan al ordenar), `reorderable` (lista que se reordena arrastrando) |
+| Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions`, `command_palette` (paleta de comandos que pone primero lo que más usa cada persona) |
 | Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
 
 Los flotantes se dibujan en capas superiores, bloquean lo que tapan y animan
@@ -98,9 +103,9 @@ también su salida. Para adaptar componentes propios: `ui.affinity(key)`,
 cargo run --release -p morfo-demo --bin docs
 ```
 
-La documentación es una app hecha con morfo. Tiene diez páginas (Inicio,
+La documentación es una app hecha con morfo. Tiene once páginas (Inicio,
 Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
-Mutación), con su propia barra de ventana en lugar de la del sistema, y a
+Mutación, Datos), con su propia barra de ventana en lugar de la del sistema, y a
 las que se llega con un índice lateral: un riel en el borde
 izquierdo que se despliega al acercar el cursor. Cada página explica un
 grupo de componentes, lo muestra funcionando y enseña el código que lo
@@ -151,9 +156,10 @@ repintado completo.
 
 ## Limitaciones actuales
 
-- Campo de texto de una línea, sin selección, portapapeles ni IME. Los botones
-  y demás controles aún no se manejan con teclado, y no hay accesibilidad.
-- Texto sin ajuste de línea; una fuente normal y una monoespaciada.
+- Los campos de texto no tienen selección, portapapeles ni IME. Los botones y
+  demás controles aún no se manejan con teclado, y no hay accesibilidad.
+- Una fuente normal y una monoespaciada; sin negritas ni cursivas.
+- La tabla dibuja todas sus filas; para miles de filas hace falta paginarla.
 - El scroll es vertical y con rueda (sin arrastrar la barra); dibuja solo lo
   visible, pero recorre el layout de todo el contenido.
 - Layout de filas y columnas con tamaños intrínsecos; sin rejilla.

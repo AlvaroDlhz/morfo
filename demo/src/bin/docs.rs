@@ -36,6 +36,8 @@ struct App {
     edge: Option<ResizeEdge>,
     /// The title bar's close button was pressed.
     quit: bool,
+    /// Ctrl is held (for Ctrl+K).
+    ctrl: bool,
 }
 
 fn direction(e: ResizeEdge) -> ResizeDirection {
@@ -211,6 +213,7 @@ impl ApplicationHandler for App {
                 }
                 window.request_redraw();
             }
+            WindowEvent::ModifiersChanged(m) => self.ctrl = m.state().control_key(),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.ui.scroll_wheel(match delta {
                     MouseScrollDelta::LineDelta(_, lines) => lines * 48.0,
@@ -229,11 +232,16 @@ impl ApplicationHandler for App {
                     WinitKey::Named(NamedKey::Enter) => Some(Key::Enter),
                     WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
                     WinitKey::Named(NamedKey::Tab) => Some(Key::Tab),
+                    WinitKey::Named(NamedKey::ArrowUp) => Some(Key::Up),
+                    WinitKey::Named(NamedKey::ArrowDown) => Some(Key::Down),
                     _ => None,
                 };
+                let ctrl_k = self.ctrl && matches!(&event.logical_key, WinitKey::Character(c) if c.eq_ignore_ascii_case("k"));
                 match (key, &event.text) {
+                    _ if ctrl_k => self.state.palette = !self.state.palette,
                     (Some(key), _) => self.ui.key_pressed(key),
-                    (None, Some(text)) => self.ui.text_input(text),
+                    // Text typed with Ctrl held is a shortcut, not text.
+                    (None, Some(text)) if !self.ctrl => self.ui.text_input(text),
                     _ => {}
                 }
                 window.request_redraw();
@@ -255,6 +263,6 @@ fn main() {
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App { ui, state: State::default(), renderer, gfx: None, wake: None, edge: None, quit: false };
+    let mut app = App { ui, state: State::default(), renderer, gfx: None, wake: None, edge: None, quit: false, ctrl: false };
     event_loop.run_app(&mut app).unwrap();
 }

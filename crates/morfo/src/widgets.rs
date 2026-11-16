@@ -139,6 +139,8 @@ impl Ui {
         let shadow_slot = self.draw.reserve();
         let bg_slot = self.draw.reserve();
         let gap = self.theme.gap;
+        // The content wraps and stretches within the card's own width.
+        self.next_width = Some((width - 2.0 * pad).max(0.0));
         let (origin, mut size) = self.group(id, Dir::Column, Vec2::splat(pad), gap, None, f);
         size.x = width;
         self.sizes.insert(id, size);

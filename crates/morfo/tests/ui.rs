@@ -1,4 +1,4 @@
-use morfo::{DrawCmd, Theme, Ui, Vec2};
+use morfo::{Color, DrawCmd, Theme, Ui, Vec2};
 
 const VIEW: Vec2 = Vec2::new(800.0, 600.0);
 const ITEMS: [(&str, &str); 3] = [("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")];
@@ -711,4 +711,273 @@ fn window_borders_resize_unless_maximized() {
     let r = press_on_bar(&mut ui, &mut t, Vec2::new(VIEW.x - 2.0, 300.0), true);
     assert_eq!(r.resize, None);
     assert_eq!(r.hover_edge, None);
+}
+
+// ----- more controls ----------------------------------------------------------
+
+/// Presses at `from`, drags to `to` over a few frames and releases.
+fn drag(ui: &mut Ui, t: &mut f64, from: Vec2, to: Vec2, mut f: impl FnMut(&mut Ui)) {
+    ui.pointer_moved(from);
+    frame(ui, t, &mut f);
+    ui.pointer_pressed();
+    frame(ui, t, &mut f);
+    for i in 1..=6 {
+        ui.pointer_moved(from + (to - from) * (i as f32 / 6.0));
+        frame(ui, t, &mut f);
+    }
+    ui.pointer_released();
+    frame(ui, t, &mut f);
+}
+
+#[test]
+fn range_slider_moves_the_nearest_thumb_and_keeps_order() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut lo, mut hi) = (0.2f32, 0.6f32);
+    let mut build = |ui: &mut Ui| {
+        ui.range_slider("r", &mut lo, &mut hi, 400.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let r = ui.rect_of(ui.id("r")).unwrap();
+    let x = |v: f32| r.x + 12.0 + (r.w - 24.0) * v;
+    // Grab near the upper thumb and drag it right.
+    drag(&mut ui, &mut t, Vec2::new(x(0.62), r.center().y), Vec2::new(x(0.9), r.center().y), &mut build);
+    // Grab the lower one and try to push it past the upper one: it stops there.
+    drag(&mut ui, &mut t, Vec2::new(x(0.2), r.center().y), Vec2::new(r.right() + 50.0, r.center().y), &mut build);
+    drop(build);
+    assert!((hi - 0.9).abs() < 0.05, "{hi}");
+    assert_eq!(lo, hi);
+}
+
+#[test]
+fn knob_turns_by_dragging_and_by_wheel() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut v = 0.5f32;
+    let mut build = |ui: &mut Ui| {
+        ui.knob("k", "Volume", &mut v);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let c = ui.rect_of(ui.id("k")).unwrap();
+    let center = Vec2::new(c.center().x, c.y + 30.0);
+    // Up by 80 px: half of the 160 px that span the range.
+    drag(&mut ui, &mut t, center, center - Vec2::new(0.0, 80.0), &mut build);
+    ui.pointer_moved(center);
+    ui.scroll_wheel(-60.0);
+    frame(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert!((v - 0.9).abs() < 0.02, "{v}");
+}
+
+#[test]
+fn rating_sets_and_clears() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let stars = std::cell::Cell::new(0u8);
+    let mut build = |ui: &mut Ui| {
+        let mut v = stars.get();
+        ui.rating("stars", &mut v, 5);
+        stars.set(v);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let r = ui.rect_of(ui.id("stars")).unwrap();
+    let fourth = Vec2::new(r.x + r.w * 0.7, r.center().y);
+    let mut tap = |ui: &mut Ui, t: &mut f64, p: Vec2| {
+        ui.pointer_moved(p);
+        frame(ui, t, &mut build);
+        ui.pointer_pressed();
+        frame(ui, t, &mut build);
+        ui.pointer_released();
+        frame(ui, t, &mut build);
+    };
+    tap(&mut ui, &mut t, fourth);
+    let after_first = stars.get();
+    tap(&mut ui, &mut t, fourth);
+    assert_eq!((after_first, stars.get()), (4, 0));
+}
+
+#[test]
+fn swatches_and_xy_pad() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let colors = [Color::hex(0xff0000), Color::hex(0x00ff00), Color::hex(0x0000ff)];
+    let (mut pick, mut point) = (0usize, Vec2::new(0.5, 0.5));
+    let mut build = |ui: &mut Ui| {
+        ui.swatches("sw", &colors, &mut pick);
+        ui.xy_pad("pad", &mut point, Vec2::new(200.0, 100.0));
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let third = ui.id("sw").with(2);
+    click(&mut ui, &mut t, third, &mut build);
+    let pad = ui.rect_of(ui.id("pad")).unwrap();
+    drag(&mut ui, &mut t, pad.center(), Vec2::new(pad.x + 50.0, pad.y + 75.0), &mut build);
+    drop(build);
+    assert_eq!(pick, 2);
+    assert!((point.x - 0.25).abs() < 0.01 && (point.y - 0.75).abs() < 0.01, "{point:?}");
+}
+
+// ----- wrapped text, pickers, data, palette -----------------------------------
+
+#[test]
+fn paragraphs_wrap_to_the_width_and_reflow() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let text = "una frase bastante larga que no cabe en una sola línea de un panel estrecho";
+    let mut width = 760.0;
+    let build = |ui: &mut Ui, w: f32| {
+        ui.card_w("c", w, |ui| ui.paragraph(text));
+        ui.button("below", "Below");
+    };
+    settle(&mut ui, &mut t, |ui| build(ui, width));
+    let wide = ui.rect_of(ui.id("below")).unwrap().y;
+    width = 220.0;
+    settle(&mut ui, &mut t, |ui| build(ui, width));
+    // Narrower: more lines, so what follows moves down.
+    assert!(ui.rect_of(ui.id("below")).unwrap().y > wide + 30.0);
+    assert!(texts(&ui).len() > 4);
+}
+
+#[test]
+fn text_area_takes_newlines_and_moves_between_lines() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut notes = String::new();
+    let mut build = |ui: &mut Ui| {
+        ui.text_area("notes", &mut notes, "Notes", Vec2::new(300.0, 120.0));
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let id = ui.id("notes");
+    click(&mut ui, &mut t, id, &mut build);
+    ui.text_input("abc");
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, &mut build);
+    ui.text_input("de");
+    frame(&mut ui, &mut t, &mut build);
+    // Up to the first line, near the same column, and type there.
+    ui.key_pressed(Key::Up);
+    frame(&mut ui, &mut t, &mut build);
+    ui.text_input("X");
+    frame(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(notes, "abXc\nde");
+}
+
+#[test]
+fn select_and_combobox() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let options = ["Madrid", "Málaga", "Bilbao", "Sevilla"];
+    let (mut sel, mut city, mut query) = (0usize, None, String::new());
+    let mut build = |ui: &mut Ui| {
+        ui.select("s", &options, &mut sel);
+        ui.combobox("c", &options, &mut city, &mut query, "City", 240.0);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let s = ui.id("s");
+    click(&mut ui, &mut t, s, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    click(&mut ui, &mut t, s.child("option").with(2), &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    // Combobox: "mala" matches "Málaga" (no accents needed); Enter picks it.
+    let c = ui.id("c");
+    click(&mut ui, &mut t, c, &mut build);
+    ui.text_input("mala");
+    frame(&mut ui, &mut t, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    let focused = ui.has_focus();
+    drop(build);
+    assert_eq!(sel, 2);
+    assert_eq!((city, query.as_str(), focused), (Some(1), "Málaga", false));
+}
+
+#[test]
+fn table_sorts_and_rows_travel() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let rows: [&[&str]; 3] = [&["Pera", "12 €"], &["Kiwi", "3 €"], &["Uva", "100 €"]];
+    let mut sort = None;
+    let mut build = |ui: &mut Ui| {
+        ui.table("t", &["Fruta", "Precio"], &rows, &mut sort);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let row_y = |ui: &Ui, i: u64| ui.rect_of(ui.id("t").child("row").with(i)).unwrap().y;
+    assert!(row_y(&ui, 0) < row_y(&ui, 1) && row_y(&ui, 1) < row_y(&ui, 2));
+    // Sort by price: numeric, not alphabetical (3 < 12 < 100).
+    let price = ui.id("t").child("header").with(1);
+    click(&mut ui, &mut t, price, &mut build);
+    // Mid-way the rows are travelling, not jumping.
+    frame(&mut ui, &mut t, &mut build);
+    ui.pointer_left();
+    settle(&mut ui, &mut t, &mut build);
+    assert!(row_y(&ui, 1) < row_y(&ui, 0) && row_y(&ui, 0) < row_y(&ui, 2));
+    // Again: descending.
+    click(&mut ui, &mut t, price, &mut build);
+    ui.pointer_left();
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(sort, Some((1, true)));
+}
+
+#[test]
+fn list_reorders_by_dragging() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut items = vec!["one".to_string(), "two".to_string(), "three".to_string(), "four".to_string()];
+    let mut build = |ui: &mut Ui| {
+        ui.reorderable("l", &mut items, |s| s.as_str());
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let first = ui.rect_of(ui.id("l").child("one")).unwrap();
+    let third = ui.rect_of(ui.id("l").child("three")).unwrap();
+    drag(&mut ui, &mut t, first.center(), Vec2::new(first.center().x, third.center().y + 4.0), &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(items, ["two", "three", "one", "four"]);
+}
+
+#[test]
+fn command_palette_filters_runs_and_learns() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let commands = [("a", "Abrir archivo"), ("g", "Guardar"), ("e", "Exportar a PDF")];
+    let (mut open, mut ran) = (false, Vec::new());
+    let run = |ui: &mut Ui, t: &mut f64, open: &mut bool, ran: &mut Vec<usize>, typed: &str| {
+        *open = true;
+        frame(ui, t, |ui| {
+            ui.command_palette("p", open, &commands);
+        });
+        ui.text_input(typed);
+        frame(ui, t, |ui| {
+            ui.command_palette("p", open, &commands);
+        });
+        ui.key_pressed(Key::Enter);
+        frame(ui, t, |ui| {
+            if let Some(i) = ui.command_palette("p", open, &commands) {
+                ran.push(i);
+            }
+        });
+        settle(ui, t, |ui| {
+            ui.command_palette("p", open, &commands);
+        });
+    };
+    // Scattered letters match: "exp pdf" runs "Exportar a PDF".
+    run(&mut ui, &mut t, &mut open, &mut ran, "exppdf");
+    assert_eq!(ran, [2]);
+    assert!(!open && !ui.has_focus());
+    // Used a few times, "Guardar" becomes what Enter runs with nothing typed.
+    for _ in 0..3 {
+        run(&mut ui, &mut t, &mut open, &mut ran, "guar");
+    }
+    run(&mut ui, &mut t, &mut open, &mut ran, "");
+    assert_eq!(ran.last(), Some(&1));
+}
+
+#[test]
+fn text_area_ignores_the_caret_of_another_field() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut name, mut notes) = (String::new(), String::from("árbol"));
+    let mut build = |ui: &mut Ui| {
+        ui.text_field("name", &mut name, "Name", 200.0);
+        ui.text_area("notes", &mut notes, "Notes", Vec2::new(200.0, 80.0));
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let field = ui.id("name");
+    click(&mut ui, &mut t, field, &mut build);
+    // A caret position that would fall inside "á" in the other field.
+    ui.text_input("x");
+    frame(&mut ui, &mut t, &mut build);
 }

@@ -56,6 +56,8 @@ pub enum Key {
     Enter,
     Escape,
     Tab,
+    Up,
+    Down,
 }
 
 /// What happened to an interactive element this frame.
@@ -107,6 +109,7 @@ pub(crate) struct Node {
     /// Widget-specific state flags.
     pub open: bool,
     pub latch: bool,
+    pub index: usize,
     seen: u64,
     age: u32,
 }
@@ -128,6 +131,7 @@ impl Node {
             stamp: 0.0,
             open: false,
             latch: false,
+            index: 0,
             seen: 0,
             age: 0,
         }
@@ -229,6 +233,10 @@ pub struct Ui {
     pub(crate) toast_seq: u64,
     pub(crate) morphs: IdMap<crate::morph::Morph>,
     pub(crate) top_inset: f32,
+    /// Text owned by widgets themselves (the command palette's query).
+    pub(crate) strings: IdMap<String>,
+    /// Inner width for the next group, overriding what the parent leaves.
+    pub(crate) next_width: Option<f32>,
     pub(crate) morph_buf: Vec<DrawCmd>,
 }
 
@@ -272,6 +280,8 @@ impl Ui {
             toast_seq: 0,
             morphs: IdMap::default(),
             top_inset: 0.0,
+            strings: IdMap::default(),
+            next_width: None,
             morph_buf: Vec::new(),
         }
     }
@@ -657,7 +667,7 @@ impl Ui {
         let prev = self.sizes.get(&id).copied().unwrap_or(Vec2::ZERO);
         let origin = origin.unwrap_or_else(|| self.peek(prev));
         let parent = self.layouts.last().unwrap();
-        let width = (parent.width - (origin.x - parent.origin.x) - 2.0 * inset.x).max(0.0);
+        let width = self.next_width.take().unwrap_or(parent.width - (origin.x - parent.origin.x) - 2.0 * inset.x).max(0.0);
         self.layouts.push(Layout {
             id,
             dir,

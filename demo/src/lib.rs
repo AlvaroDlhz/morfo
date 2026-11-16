@@ -8,8 +8,20 @@ use morfo::{Color, Icon, Profile, Prominence, Size, Theme, TitleBar, Ui, Variant
 /// Tamaño lógico recomendado de la ventana.
 pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
 
-pub const PAGES: [&str; 10] =
-    ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación"];
+pub const PAGES: [&str; 11] =
+    ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación", "Datos"];
+
+const CITIES: [&str; 8] = ["Madrid", "Barcelona", "Valencia", "Sevilla", "Málaga", "Bilbao", "Zaragoza", "A Coruña"];
+
+const PRODUCTS: [&[&str]; 7] = [
+    &["Teclado mecánico", "Periféricos", "89 €", "34"],
+    &["Monitor 27\"", "Pantallas", "329 €", "12"],
+    &["Ratón inalámbrico", "Periféricos", "39 €", "120"],
+    &["Portátil 14\"", "Ordenadores", "1149 €", "7"],
+    &["Auriculares", "Audio", "129 €", "56"],
+    &["Webcam HD", "Periféricos", "59 €", "0"],
+    &["Altavoces", "Audio", "79 €", "18"],
+];
 
 pub const ACTIONS: [(&str, &str); 5] =
     [("nuevo", "Nuevo"), ("abrir", "Abrir"), ("guardar", "Guardar"), ("exportar", "Exportar"), ("compartir", "Compartir")];
@@ -92,6 +104,20 @@ pub struct State {
     pub maximized: bool,
     /// What the title bar asked of the window this frame (the host does it).
     pub chrome: TitleBar,
+    pub price: (f32, f32),
+    pub volume: f32,
+    pub stars: u8,
+    pub accent: usize,
+    pub point: Vec2,
+    pub notes: String,
+    pub plan_pick: usize,
+    pub city_pick: Option<usize>,
+    pub city_query: String,
+    pub sort: Option<(usize, bool)>,
+    pub product: Option<usize>,
+    pub tasks: Vec<String>,
+    /// The command palette is open.
+    pub palette: bool,
 }
 
 impl Default for State {
@@ -129,8 +155,32 @@ impl Default for State {
             busy_until: [0.0; 4],
             maximized: false,
             chrome: TitleBar::default(),
+            price: (0.25, 0.7),
+            volume: 0.62,
+            stars: 3,
+            accent: 0,
+            point: Vec2::new(0.3, 0.6),
+            notes: String::new(),
+            plan_pick: 1,
+            city_pick: None,
+            city_query: String::new(),
+            sort: None,
+            product: None,
+            tasks: ["Diseñar la portada", "Revisar los textos", "Preparar la demo", "Publicar la versión", "Escribir el anuncio"]
+                .map(String::from)
+                .to_vec(),
+            palette: false,
         }
     }
+}
+
+/// Colores de acento que se pueden elegir en la página «Controles».
+pub const ACCENTS: [u32; 6] = [0x7c6cff, 0x22c3a6, 0xff7a59, 0xf5b83d, 0xe5484d, 0x3b82f6];
+
+/// El tema según las preferencias elegidas: claro u oscuro, y su acento.
+fn theme_of(s: &State) -> Theme {
+    let base = if s.light { Theme::light() } else { Theme::dark() };
+    base.with_accent(Color::hex(ACCENTS[s.accent]))
 }
 
 /// Otra persona: perfil vacío, la interfaz vuelve a su forma inicial.
@@ -152,9 +202,17 @@ pub fn build(ui: &mut Ui, s: &mut State) {
     // La barra de la aplicación sustituye a la del gestor de ventanas: mueve,
     // minimiza, maximiza y cierra la ventana (eso lo hace el programa).
     let page_name = PAGES[s.tab];
+    let mut open_palette = false;
     s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| {
         ui.muted(page_name);
+        if ui.icon_button("comandos", Icon::Search, Variant::Ghost, Size::Sm).clicked {
+            open_palette = true;
+        }
+        ui.tooltip("comandos", "Paleta de comandos (Ctrl+K)");
     });
+    if open_palette {
+        s.palette = true;
+    }
     // El índice vive en el borde izquierdo: se despliega al acercar el cursor.
     ui.side_nav("indice", "morfo", &PAGES, &mut s.tab);
     ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para abrir el índice.");
@@ -285,7 +343,7 @@ pub fn build(ui: &mut Ui, s: &mut State) {
         ui.card("card-controles", |ui| {
             ui.row(|ui| {
                 if ui.toggle("light", &mut s.light) {
-                    ui.set_theme(if s.light { Theme::light() } else { Theme::dark() });
+                    ui.set_theme(theme_of(s));
                 }
                 ui.label("Tema claro");
                 ui.muted("(set_theme: todos los colores hacen morph)");
@@ -306,6 +364,63 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "ui.slider(\"nivel\", &mut nivel, 260.0);   // nivel: f32 en 0..=1",
             "ui.progress(nivel, ui.available_width());",
             "ui.segmented(\"rango\", &[\"Día\", \"Semana\", \"Mes\"], &mut rango);",
+        ]);
+
+        ui.space(8.0);
+        ui.title("Cinco controles más");
+        ui.muted("Todos responden con muelles: se pueden arrastrar, interrumpir y nunca saltan.");
+        ui.card("card-mas-controles", |ui| {
+            ui.label("Rango");
+            ui.muted("Dos manijas: se mueve la más cercana y ninguna adelanta a la otra.");
+            ui.row(|ui| {
+                let (mut lo, mut hi) = s.price;
+                ui.range_slider("rango-doble", &mut lo, &mut hi, 320.0);
+                s.price = (lo, hi);
+                ui.muted(&format!("{:.0} – {:.0} €", lo * 500.0, hi * 500.0));
+            });
+            ui.separator();
+            ui.row(|ui| {
+                ui.column(|ui| {
+                    ui.label("Perilla");
+                    ui.muted("Arrastra arriba o abajo, o usa la rueda.");
+                    ui.row(|ui| {
+                        ui.knob("volumen", &format!("Volumen {:.0}%", s.volume * 100.0), &mut s.volume);
+                        let mut graves = 1.0 - s.volume;
+                        if ui.knob("graves", "Graves", &mut graves) {
+                            s.volume = 1.0 - graves;
+                        }
+                    });
+                });
+                ui.space(24.0);
+                ui.column(|ui| {
+                    ui.label("Pad XY");
+                    ui.muted("Arrastra el punto: dos valores a la vez.");
+                    ui.xy_pad("pad", &mut s.point, Vec2::new(260.0, 140.0));
+                });
+            });
+            ui.separator();
+            ui.label("Valoración");
+            ui.muted("Pasa el cursor para previsualizar; vuelve a pulsar la misma para quitarla.");
+            ui.row(|ui| {
+                ui.rating("estrellas", &mut s.stars, 5);
+                ui.muted(&format!("{} de 5", s.stars));
+            });
+            ui.separator();
+            ui.label("Muestras de color");
+            ui.muted("Elige un acento: toda la interfaz cambia de color con un morph.");
+            let colors = ACCENTS.map(Color::hex);
+            if ui.swatches("acento", &colors, &mut s.accent) {
+                ui.set_theme(theme_of(s));
+            }
+        });
+        ui.code(&[
+            "ui.range_slider(\"precio\", &mut minimo, &mut maximo, 320.0);   // ambos en 0..=1",
+            "ui.knob(\"volumen\", \"Volumen\", &mut volumen);",
+            "ui.xy_pad(\"pad\", &mut punto, Vec2::new(260.0, 140.0));        // punto: Vec2 en 0..=1",
+            "ui.rating(\"estrellas\", &mut estrellas, 5);                    // estrellas: u8",
+            "if ui.swatches(\"acento\", &colores, &mut elegido) {",
+            "    ui.set_theme(Theme::dark().with_accent(colores[elegido]));",
+            "}",
         ]);
     });
 
@@ -518,6 +633,44 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "// El programa reenvía el teclado y la rueda:",
             "ui.text_input(\"a\");  ui.key_pressed(Key::Backspace);  ui.scroll_wheel(-40.0);",
         ]);
+
+        ui.space(8.0);
+        ui.title("Texto largo y listas para elegir");
+        ui.card("card-texto", |ui| {
+            ui.label("Párrafos que se ajustan");
+            ui.paragraph_muted(
+                "Este párrafo se parte en líneas según el ancho disponible. Si cambias el tamaño de la ventana, \
+                 se recoloca y lo que hay debajo se aparta con el mismo muelle que el resto de la interfaz. \
+                 Las palabras demasiado largas para una línea se cortan entre letras.",
+            );
+            ui.separator();
+            ui.label("Área de texto");
+            ui.muted("Enter crea una línea nueva; las flechas se mueven entre líneas; hace scroll al llenarse.");
+            ui.text_area("notas", &mut s.notes, "Escribe tus notas…", Vec2::new(520.0, 120.0));
+            ui.separator();
+            ui.row(|ui| {
+                ui.column(|ui| {
+                    ui.label("Desplegable");
+                    ui.select("plan-select", &["Gratis", "Pro", "Equipo", "Empresa"], &mut s.plan_pick);
+                });
+                ui.space(24.0);
+                ui.column(|ui| {
+                    ui.label("Combobox");
+                    if ui.combobox("ciudad", &CITIES, &mut s.city_pick, &mut s.city_query, "Busca una ciudad…", 260.0) {
+                        ui.toast(&format!("Ciudad: {}", CITIES[s.city_pick.unwrap_or(0)]));
+                    }
+                });
+            });
+            ui.muted("El combobox no distingue tildes ni mayúsculas: «mala» encuentra «Málaga».");
+        });
+        ui.code(&[
+            "ui.paragraph(\"Texto largo que se ajusta al ancho disponible…\");",
+            "ui.text_area(\"notas\", &mut notas, \"Escribe…\", Vec2::new(520.0, 120.0));",
+            "ui.select(\"plan\", &[\"Gratis\", \"Pro\", \"Equipo\"], &mut plan);",
+            "if ui.combobox(\"ciudad\", &CIUDADES, &mut ciudad, &mut busqueda, \"Busca…\", 260.0) {",
+            "    // ciudad: Option<usize> con la elegida",
+            "}",
+        ]);
     });
 
     page(ui, "page-adaptativo", "scroll-adaptativo", s.tab == 8, |ui| {
@@ -545,6 +698,9 @@ pub fn build(ui: &mut Ui, s: &mut State) {
                 if ui.button_with("olvidar", "Olvidar hábitos", Variant::Ghost, Size::Sm).clicked {
                     forget(ui, s);
                 }
+                if ui.button_icon("abrir-paleta", Icon::Search, "Paleta de comandos (Ctrl+K)", Variant::Soft, Size::Sm).clicked {
+                    s.palette = true;
+                }
             });
         });
         ui.code(&[
@@ -560,6 +716,9 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "// Guardar y restaurar la forma de cada persona (texto, unos 200 bytes)",
             "let texto = ui.profile().encode();",
             "ui.set_profile(Profile::decode(&texto)?);",
+            "",
+            "// Paleta de comandos: con nada escrito, primero lo que más usas",
+            "if let Some(i) = ui.command_palette(\"paleta\", &mut abierta, &comandos) { ejecutar(i); }",
         ]);
     });
 
@@ -661,6 +820,52 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "});",
         ]);
     });
+
+    page(ui, "page-datos", "scroll-datos", s.tab == 10, |ui| {
+        ui.title("Datos");
+        ui.muted("Una tabla que se ordena con morph y una lista que se reordena arrastrando.");
+        ui.card("card-tabla", |ui| {
+            ui.label("Tabla ordenable");
+            ui.muted("Pulsa una cabecera: ascendente, descendente y vuelta al orden original. Las filas viajan.");
+            if let Some(i) = ui.table("productos", &["Producto", "Categoría", "Precio", "Stock"], &PRODUCTS, &mut s.sort) {
+                s.product = Some(i);
+            }
+            ui.row(|ui| {
+                ui.muted("Fila elegida:");
+                ui.label(s.product.map_or("ninguna", |i| PRODUCTS[i][0]));
+            });
+        });
+        ui.card("card-lista", |ui| {
+            ui.label("Lista reordenable");
+            ui.muted("Arrastra una tarea arriba o abajo: las demás le hacen sitio.");
+            ui.reorderable("tareas", &mut s.tasks, |t| t.as_str());
+        });
+        ui.code(&[
+            "if let Some(fila) = ui.table(\"productos\", &[\"Producto\", \"Precio\"], &filas, &mut orden) {",
+            "    // orden: Option<(columna, descendente)>; las columnas numéricas se ordenan como números",
+            "}",
+            "ui.reorderable(\"tareas\", &mut tareas, |t| t.as_str());   // el texto es la identidad",
+        ]);
+    });
+
+    // La paleta de comandos (Ctrl+K o el botón de la barra): con nada
+    // escrito, lo que esta persona más usa aparece primero.
+    let mut commands: Vec<(String, String)> = PAGES.iter().enumerate().map(|(i, p)| (format!("ir-{i}"), format!("Ir a {p}"))).collect();
+    commands.push(("tema".into(), "Cambiar entre tema claro y oscuro".into()));
+    commands.push(("aviso".into(), "Lanzar un aviso".into()));
+    commands.push(("olvidar".into(), "Olvidar hábitos".into()));
+    let refs: Vec<(&str, &str)> = commands.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect();
+    if let Some(i) = ui.command_palette("paleta", &mut s.palette, &refs) {
+        match commands[i].0.as_str() {
+            "tema" => {
+                s.light = !s.light;
+                ui.set_theme(theme_of(s));
+            }
+            "aviso" => ui.toast("Aviso lanzado desde la paleta"),
+            "olvidar" => forget(ui, s),
+            k => s.tab = k.trim_start_matches("ir-").parse().unwrap_or(0),
+        }
+    }
 }
 
 fn first_font(env: &str, candidates: &[&str]) -> Option<Vec<u8>> {

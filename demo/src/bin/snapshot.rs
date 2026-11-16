@@ -272,6 +272,77 @@ fn main() {
     s.time += 4.0;
     s.settle();
 
+    // Wrapped text, text area, select and combobox, further down.
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-760.0);
+    s.settle();
+    s.click(s.ui.id("notas"));
+    s.ui.text_input("Primera línea de notas, bastante larga para que el área tenga que partirla en dos.");
+    s.frame();
+    s.ui.key_pressed(Key::Enter);
+    s.frame();
+    s.ui.text_input("Segunda línea.");
+    s.frames(3);
+    s.save("12b-area-de-texto");
+    s.ui.key_pressed(Key::Escape);
+    s.frame();
+    s.click(s.ui.id("plan-select"));
+    s.settle();
+    s.save("12c-desplegable");
+    s.click(s.ui.id("plan-select").child("option").with(2));
+    s.settle();
+    s.click(s.ui.id("ciudad"));
+    s.ui.text_input("mala");
+    s.frame();
+    s.settle();
+    s.save("12d-combobox");
+    s.ui.key_pressed(Key::Enter);
+    s.frame();
+    s.ui.pointer_left();
+    s.time += 4.0;
+    s.settle();
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(5000.0);
+    s.ui.pointer_left();
+    s.settle();
+
+    // Data: sort the table by price, then drag a task.
+    s.go(10);
+    s.click(s.ui.id("productos").child("header").with(2));
+    s.frames(8);
+    s.save("12e-tabla-ordenandose");
+    s.ui.pointer_left();
+    s.settle();
+    s.save("12f-tabla-por-precio");
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-600.0);
+    s.settle();
+    let task = s.ui.rect_of(s.ui.id("tareas").child("Revisar los textos")).unwrap();
+    s.ui.pointer_moved(task.center());
+    s.frame();
+    s.ui.pointer_pressed();
+    for i in 1..=10 {
+        s.ui.pointer_moved(task.center() + Vec2::new(0.0, 14.0 * i as f32));
+        s.frame();
+    }
+    s.save("12g-arrastrando-tarea");
+    s.ui.pointer_released();
+    s.frame();
+    s.ui.pointer_left();
+    s.settle();
+    s.save("12h-lista-reordenada");
+
+    // The command palette: type, then run with Enter.
+    s.state.palette = true;
+    s.frames(4);
+    s.ui.text_input("selec");
+    s.frames(20);
+    s.save("12i-paleta");
+    s.ui.key_pressed(Key::Enter);
+    s.frame();
+    s.settle();
+    assert_eq!(s.state.tab, 3, "the palette took us to «Selección»");
+
     s.go(2);
     s.click(s.ui.id("light"));
     let r = s.ui.rect_of(s.ui.id("level")).unwrap();
@@ -285,6 +356,59 @@ fn main() {
     s.ui.pointer_released();
     s.settle();
     s.save("14-controles-claro");
+
+    // The five extra controls, further down the page.
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-560.0);
+    s.settle();
+    let r = s.ui.rect_of(s.ui.id("rango-doble")).unwrap();
+    let thumb = |v: f32| Vec2::new(r.x + 12.0 + (r.w - 24.0) * v, r.center().y);
+    s.ui.pointer_moved(thumb(0.7));
+    s.frame();
+    s.ui.pointer_pressed();
+    for i in 0..8 {
+        s.ui.pointer_moved(thumb(0.7 + 0.025 * i as f32));
+        s.frame();
+    }
+    s.ui.pointer_released();
+    let k = s.ui.rect_of(s.ui.id("volumen")).unwrap();
+    let c = Vec2::new(k.center().x, k.y + 30.0);
+    s.ui.pointer_moved(c);
+    s.frame();
+    s.ui.pointer_pressed();
+    for i in 0..8 {
+        s.ui.pointer_moved(c - Vec2::new(0.0, 6.0 * i as f32));
+        s.frame();
+    }
+    s.ui.pointer_released();
+    let pad = s.ui.rect_of(s.ui.id("pad")).unwrap();
+    s.ui.pointer_moved(pad.center());
+    s.frame();
+    s.ui.pointer_pressed();
+    for i in 0..8 {
+        s.ui.pointer_moved(pad.center() + Vec2::new(9.0 * i as f32, -5.0 * i as f32));
+        s.frame();
+    }
+    s.ui.pointer_released();
+    let stars = s.ui.rect_of(s.ui.id("estrellas")).unwrap();
+    s.ui.pointer_moved(Vec2::new(stars.x + stars.w * 0.9, stars.center().y));
+    s.frames(6);
+    s.save("14b-mas-controles");
+    s.ui.pointer_pressed();
+    s.frame();
+    s.ui.pointer_released();
+    s.frame();
+    s.click(s.ui.id("acento").with(1));
+    s.frames(12);
+    s.save("14c-acento-cambiando");
+    s.ui.pointer_left();
+    s.settle();
+    s.save("14d-acento-verde");
+    s.click(s.ui.id("acento").with(0));
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(5000.0);
+    s.ui.pointer_left();
+    s.settle();
 
     s.go(5);
     s.click(s.ui.id("morph"));

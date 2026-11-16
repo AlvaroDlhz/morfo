@@ -95,7 +95,7 @@ impl Ui {
                         self.focus = None;
                         focused = false;
                     }
-                    Key::Tab => {}
+                    Key::Tab | Key::Up | Key::Down => {}
                 }
             }
             self.cursor = at;
@@ -188,7 +188,7 @@ impl Ui {
 }
 
 /// Largest char boundary of `s` that is `<= i`.
-fn floor_boundary(s: &str, i: usize) -> usize {
+pub(crate) fn floor_boundary(s: &str, i: usize) -> usize {
     let mut i = i.min(s.len());
     while !s.is_char_boundary(i) {
         i -= 1;
