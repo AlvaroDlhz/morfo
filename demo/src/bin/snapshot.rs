@@ -58,10 +58,11 @@ impl Sim {
         self.settle();
     }
 
-    /// Opens documentation page `i` from the side index and waits for it.
+    /// Opens documentation page `i` from the course index and waits for it.
     fn go(&mut self, i: u64) {
         self.open_index();
-        self.click(self.ui.id("indice").with(i));
+        let lesson = morfo_demo::lesson_of(i as usize) as u64;
+        self.click(self.ui.id("indice").with(lesson));
         self.ui.pointer_left();
         self.settle();
     }
@@ -143,6 +144,31 @@ fn main() {
     s.ui.pointer_left();
     s.time += 1.0;
     s.settle();
+
+    // The search at the top right: the magnifier unfolds into a field.
+    let lupa = s.ui.id("barra").child("buscar").child("boton");
+    s.click(lupa);
+    s.ui.pointer_left();
+    s.frames(6);
+    s.save("01d-buscador-desplegandose");
+    s.settle();
+    s.ui.text_input("ent");
+    s.frame();
+    s.settle();
+    s.save("01e-buscador");
+    s.ui.key_pressed(Key::Enter);
+    s.frame();
+    s.settle();
+    assert_eq!(s.state.tab, 7, "the search took us to «Entrada»");
+    // The lesson footer: «Siguiente» goes on through the course.
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-20000.0);
+    s.settle();
+    s.click(s.ui.id("page-entrada").child("siguiente"));
+    s.ui.pointer_left();
+    s.settle();
+    assert_eq!(s.state.tab, 6, "after «Entrada» comes «Flotantes»");
+    s.go(0);
 
     // Adaptive page: build a habit, then watch the toolbar reshape itself.
     s.go(8);
@@ -529,6 +555,15 @@ fn main() {
     s.ui.pointer_left();
     s.settle();
     s.save("31-aviso-cerrado");
+
+    // The syllabus, with the progress of everything visited.
+    s.open_index();
+    s.ui.pointer_moved(Vec2::new(150.0, 400.0));
+    s.settle();
+    s.save("32-temario-con-progreso");
+    s.ui.pointer_left();
+    s.time += 1.0;
+    s.settle();
 
     // The incremental painter must leave exactly the pixels a full repaint would.
     s.save("16-forma");

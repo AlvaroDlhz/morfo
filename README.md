@@ -4,13 +4,15 @@ Componentes de interfaz en Rust donde **todo se transforma con fluidez** y la
 interfaz **se adapta a cada persona según cómo la usa**. Dos usuarios del mismo
 programa pueden acabar viendo interfaces distintas.
 
-| Documentación interactiva | Índice lateral desplegado |
+| Documentación interactiva | Temario del curso desplegado |
 | --- | --- |
 | ![inicio](docs/inicio.png) | ![indice](docs/indice.png) |
 | **Interfaz ya adaptada al uso** | **Tipos de botón y sus variantes** |
 | ![adaptado](docs/adaptado.png) | ![botones](docs/botones.png) |
 | **Controles, con otro color de acento** | **Paleta de comandos (Ctrl+K)** |
 | ![controles](docs/controles.png) | ![paleta](docs/paleta.png) |
+| **Buscador desplegado desde la lupa** | |
+| ![buscador](docs/buscador.png) | |
 | **Tabla ordenada por precio** | **Rejilla, columnas y alineación** |
 | ![tabla](docs/tabla.png) | ![rejilla](docs/rejilla.png) |
 | **Lo siguiente que sueles hacer** | **Tus hábitos, con su porqué** |
@@ -87,7 +89,10 @@ La entrada se pasa con `pointer_moved`, `pointer_pressed`, `pointer_released`,
 `frame.animating` es falso, `frame.wake_in` dice en cuántos segundos hará
 falta un frame sin que haya entrada (un aviso que caduca, el cursor de texto).
 Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
-`ui.set_profile(Profile::decode(texto)?)`.
+`ui.set_profile(Profile::decode(texto)?)`. Para retomar la interfaz donde se
+dejó tras relanzar el programa: `ui.save_state()` y `ui.restore_state(texto)`
+(la posición de cada scroll), y `ui.set_instant(true)` durante unos frames sin
+pintar para que el primero que se vea esté ya quieto y en su sitio.
 
 ### Componentes
 
@@ -98,9 +103,9 @@ Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
 | Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
 | Controles | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (rango con dos manijas), `knob` (perilla), `xy_pad` (pad de dos ejes), `rating` (estrellas), `swatches` (muestras de color) |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
-| Cajas | `row`, `row_top`, `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida) |
-| Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `close` |
-| Navegación | `side_nav` (índice oculto en el borde izquierdo que se despliega al acercar el cursor) |
+| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida) |
+| Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `notice` (aviso fijo en una esquina mientras se declare: trabajo en curso, sin conexión, un error), `close` |
+| Navegación | `course_nav` (temario de curso en el borde izquierdo: módulos, lecciones numeradas en una línea de tiempo y progreso que se recuerda), `side_nav` (índice simple), `search` (lupa que se despliega en un buscador con resultados) |
 | Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
 | Entrada | `text_field` y `text_area` (selección con ratón y Mayús, Ctrl+A/C/X/V, métodos de entrada; el área es multilínea con ajuste y scroll), `select` (desplegable), `combobox` (sugerencias sin distinguir tildes) |
 | Datos | `table` (ordenable por columnas; las filas viajan al ordenar), `reorderable` (lista que se reordena arrastrando) |
@@ -121,6 +126,60 @@ cargo run --release -p morfo-demo --bin docs
 
 Dibuja con la GPU si la hay (si no, con la CPU; `-- --cpu` la fuerza).
 
+### Cambios en vivo mientras desarrollas
+
+Lanzada con `cargo run` (el comando de arriba), la documentación se recarga
+sola. Al guardar un fuente (de la demo, del núcleo o de un renderizador)
+recompila en segundo plano y se relanza en el sitio: la misma página, el
+mismo scroll y tema, lo escrito en los campos, y la ventana donde estaba, sin
+quitarle el teclado al editor. Mientras compila lo avisa en una esquina; si no compila, sigue en
+marcha la versión anterior y el aviso muestra el primer error.
+
+Una recarga tarda lo que tarde la compilación incremental, y en release (por
+el LTO) eso es más de un minuto. Por eso la documentación recarga siempre con
+el perfil `dev`, aunque se arranque con `--release`: entre 1 y 5 s por
+cambio. La primera recarga compila ese perfil entero si aún no existe (unos
+minutos, una sola vez). `MORFO_LIVE_PROFILE=release` mantiene las recargas
+optimizadas y `MORFO_LIVE=0` las desactiva. Un binario lanzado sin
+`cargo run` no vigila nada.
+
+Para una app propia es el crate `morfo-live` (sin dependencias, Unix):
+
+```rust
+use morfo_live::{Live, Snapshot, Status};
+
+struct Estado { pagina: usize, nombre: String }
+morfo_live::persist!(Estado { pagina, nombre });   // genera save() y restore()
+
+// Al arrancar: lo que dejó la compilación anterior, si esto es una recarga.
+if let Some(snap) = morfo_live::restored() {
+    estado.restore(&snap);
+    ui.restore_state(&snap.get::<String>("ui").unwrap_or_default());
+}
+// `despertar` se llama desde otro hilo cuando cambia el estado de la recarga.
+// Recompila con el perfil con que se arrancó; `start_with_profile("dev", …)`
+// hace que las recargas sean rápidas aunque se arranque con `--release`.
+let live = Live::start(despertar);
+
+// En el bucle de eventos:
+match live.status() {
+    Status::Building => ui.notice("live", "Recompilando…"),
+    Status::Failed(error) => ui.notice("live", &error),
+    Status::Ready => {
+        let mut snap = Snapshot::new();
+        estado.save(&mut snap);
+        snap.set("ui", &ui.save_state());
+        live.restart(&snap);   // el proceso pasa a ser la nueva compilación
+    }
+    Status::Watching => {}
+}
+```
+
+Los valores se guardan por nombre: un campo que la nueva compilación ya no
+tiene se ignora y uno nuevo conserva su valor por defecto, así que el estado
+sobrevive a los mismos cambios de código que provocan la recarga. El ejemplo
+completo, con la posición de la ventana, está en `demo/src/bin/docs.rs`.
+
 La misma documentación funciona en el navegador:
 
 ```bash
@@ -132,9 +191,11 @@ versión de `Cargo.lock`.
 
 La documentación es una app hecha con morfo. Tiene once páginas (Inicio,
 Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
-Mutación, Datos), con su propia barra de ventana en lugar de la del sistema, y a
-las que se llega con un índice lateral: un riel en el borde
-izquierdo que se despliega al acercar el cursor. Cada página explica un
+Mutación, Datos), ordenadas como un curso de cuatro módulos. El temario vive
+en el borde izquierdo: se despliega al acercar el cursor, marca las lecciones
+vistas y recuerda el progreso. Arriba a la derecha, una lupa se despliega en
+un buscador de lecciones y acciones (Ctrl+K en escritorio), y al final de
+cada lección hay botones para pasar a la anterior o a la siguiente. Cada página explica un
 grupo de componentes, lo muestra funcionando y enseña el código que lo
 produce. Su fuente, `demo/src/lib.rs`, sirve también de ejemplo completo.
 El perfil de uso se guarda al cerrar en `~/.config/morfo-demo/profile.txt`.
@@ -183,11 +244,15 @@ repintado completo.
 | `crates/morfo-skia` | Renderizador por CPU con repintado parcial y en paralelo |
 | `crates/morfo-wgpu` | Renderizador por GPU (wgpu): un shader, una llamada por región de recorte |
 | `crates/morfo-web` | Backend web: canvas, eventos del navegador, portapapeles, IME |
+| `crates/morfo-live` | Recarga en vivo durante el desarrollo: vigila los fuentes, recompila y relanza el programa conservando su estado |
 | `demo` | Documentación en ventana (GPU o CPU, AccessKit, portapapeles) y simulador sin ventana |
 | `web` | La documentación compilada a WebAssembly |
 
 ## Limitaciones actuales
 
+- La recarga en vivo relanza el programa entero (solo en Unix): lo que no se
+  guarde en el `Snapshot` empieza de nuevo, la ventana parpadea un instante y
+  en Wayland vuelve donde el compositor decida.
 - Una fuente normal y una monoespaciada; sin negritas, cursivas ni texto
   bidireccional (árabe, hebreo).
 - La tabla dibuja todas sus filas; para miles de filas hace falta paginarla.

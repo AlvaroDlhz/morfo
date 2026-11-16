@@ -1321,3 +1321,172 @@ fn anything_can_animate_out() {
     assert!(!texts(&ui).contains(&"Saved".to_string()));
     assert!(ui.rect_of(ui.id("below")).unwrap().y < y0 - 20.0);
 }
+
+// ----- course index, search, flexible space -----------------------------------------
+
+#[test]
+fn fill_pushes_the_rest_of_a_row_to_its_end() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.row(|ui| {
+            ui.button("left", "Left");
+            ui.fill();
+            ui.button("right", "Right");
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let right = ui.rect_of(ui.id("right")).unwrap();
+    assert!((right.right() - (VIEW.x - 27.0)).abs() < 1.0, "{right:?}");
+    assert!(ui.rect_of(ui.id("left")).unwrap().x < 40.0);
+}
+
+#[test]
+fn course_index_tracks_progress_and_navigates() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let modules: [(&str, &[&str]); 2] = [("Basics", &["One", "Two"]), ("More", &["Three"])];
+    let mut at = 0usize;
+    let mut build = |ui: &mut Ui| {
+        ui.course_nav("course", "Course", &modules, &mut at);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let row = |ui: &Ui, i: u64| ui.id("course").with(i);
+    // The current lesson counts as visited; the others not yet.
+    assert_eq!(ui.profile().count(row(&ui, 0)), 1);
+    assert_eq!(ui.profile().count(row(&ui, 2)), 0);
+    // Unfold from the edge and pick the third lesson.
+    ui.pointer_moved(Vec2::new(3.0, 300.0));
+    settle(&mut ui, &mut t, &mut build);
+    let third = row(&ui, 2);
+    click(&mut ui, &mut t, third, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(at, 2);
+    assert!(ui.profile().count(third) >= 1);
+}
+
+#[test]
+fn search_unfolds_finds_and_folds_back() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let items = [("a", "Abrir archivo"), ("g", "Guardar"), ("e", "Exportar a PDF")];
+    let open = std::cell::Cell::new(false);
+    let mut found = None;
+    let mut build = |ui: &mut Ui| {
+        let mut o = open.get();
+        if let Some(i) = ui.search("find", "Search", &mut o, &items, 240.0) {
+            found = Some(i);
+        }
+        open.set(o);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    // Folded: just the magnifier.
+    let icon = ui.id("find").child("boton");
+    let narrow = ui.rect_of(icon).unwrap().w;
+    click(&mut ui, &mut t, icon, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    // Unfolded into a focused field.
+    assert!(ui.has_focus());
+    assert!(ui.rect_of(ui.id("find").child("campo")).unwrap().w > narrow * 3.0);
+    ui.text_input("pdf");
+    frame(&mut ui, &mut t, &mut build);
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    let focus_after = ui.has_focus();
+    // Opened from outside (a shortcut), Escape folds it.
+    open.set(true);
+    frame(&mut ui, &mut t, &mut build);
+    frame(&mut ui, &mut t, &mut build);
+    let focus_on_shortcut = ui.has_focus();
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(found, Some(2));
+    assert!(!focus_after && focus_on_shortcut);
+    assert!(!open.get());
+}
+
+// ----- picking up where it was left ---------------------------------------
+
+#[test]
+fn a_relaunch_restores_the_scroll_already_at_rest() {
+    let build = |ui: &mut Ui| {
+        ui.heading("Top");
+        ui.scroll("list", 200.0, |ui| {
+            for i in 0..60 {
+                ui.scope(&format!("row{i}"), |ui| {
+                    ui.button("b", &format!("Row {i}"));
+                });
+            }
+        });
+    };
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    settle(&mut ui, &mut t, build);
+    let row = ui.id("row8").child("b");
+    let unscrolled = ui.rect_of(row).unwrap().y;
+    ui.pointer_moved(ui.rect_of(ui.id("list")).unwrap().center());
+    ui.scroll_wheel(-300.0);
+    settle(&mut ui, &mut t, build);
+    let y = ui.rect_of(row).unwrap().y;
+    assert!((unscrolled - y - 300.0).abs() < 0.5);
+    let saved = ui.save_state();
+
+    // The next run has nothing but that text. A few unpainted frames with
+    // no animation, and its first visible frame is the old one.
+    let (mut next, mut t) = (Ui::new(Theme::dark()), 0.0);
+    assert!(next.restore_state(&saved));
+    next.set_instant(true);
+    for _ in 0..4 {
+        frame(&mut next, &mut t, build);
+    }
+    next.set_instant(false);
+    assert!(!frame(&mut next, &mut t, build), "already at rest");
+    assert!((next.rect_of(row).unwrap().y - y).abs() < 0.5);
+    assert_eq!(next.save_state(), saved);
+
+    // A page that got shorter is scrolled as far as it still goes.
+    let (mut shorter, mut t) = (Ui::new(Theme::dark()), 0.0);
+    assert!(shorter.restore_state(&saved));
+    let short = |ui: &mut Ui| {
+        ui.scroll("list", 200.0, |ui| {
+            for i in 0..3 {
+                ui.scope(&format!("row{i}"), |ui| {
+                    ui.button("b", &format!("Row {i}"));
+                });
+            }
+        });
+    };
+    settle(&mut shorter, &mut t, short);
+    assert!(shorter.rect_of(shorter.id("row0").child("b")).unwrap().y > 0.0);
+
+    assert!(!next.restore_state("not a saved state"));
+    assert!(!next.restore_state("morfo-ui1\ns zz 10\n"));
+    assert!(next.restore_state("morfo-ui1\nfuture 1 2 3\n"), "unknown lines are skipped");
+}
+
+#[test]
+fn a_notice_stays_while_declared_and_then_leaves() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let text = std::cell::Cell::new(Some("Rebuilding…"));
+    let build = |ui: &mut Ui| {
+        ui.label("App");
+        if let Some(text) = text.get() {
+            ui.notice("build", text);
+        }
+    };
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"Rebuilding…".to_string()));
+    // Unlike a toast, it is still there an hour later, costing nothing.
+    t += 3600.0;
+    assert!(!frame(&mut ui, &mut t, build));
+    assert!(texts(&ui).contains(&"Rebuilding…".to_string()));
+    // Long text wraps instead of leaving the window.
+    text.set(Some("error[E0425]: cannot find value `nope` in this scope, and the explanation goes on and on for far longer than the window is wide"));
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).len() > 2, "wrapped into several lines");
+    // No longer declared: it animates out and is gone.
+    text.set(None);
+    assert!(frame(&mut ui, &mut t, build));
+    settle(&mut ui, &mut t, build);
+    assert_eq!(texts(&ui), ["App"]);
+}

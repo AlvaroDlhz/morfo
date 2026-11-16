@@ -259,6 +259,14 @@ pub struct Ui {
     pub(crate) base_theme: Theme,
     pub(crate) density: Motion<f32>,
     pub(crate) auto_density: bool,
+    /// Every spring jumps to its target (see [`Ui::set_instant`]).
+    pub(crate) instant: bool,
+    /// Scroll areas declared so far; their offset lives in their node.
+    pub(crate) scroll_ids: Vec<Id>,
+    /// Offsets from [`Ui::restore_state`], applied once their area has
+    /// measured its content: the offset and for how many more frames.
+    pub(crate) scroll_restore: IdMap<(f32, u8)>,
+    pub(crate) notices: Vec<crate::overlay::Notice>,
 }
 
 impl Ui {
@@ -323,6 +331,10 @@ impl Ui {
             base_theme: theme,
             density: Motion::new(1.0),
             auto_density: false,
+            instant: false,
+            scroll_ids: Vec::new(),
+            scroll_restore: IdMap::default(),
+            notices: Vec::new(),
         }
     }
 
@@ -454,7 +466,7 @@ impl Ui {
     pub fn begin(&mut self, now: f64, viewport: Vec2) {
         // Springs are exact for any step, but after sleeping at rest a huge
         // step would skip the first visible frames of the next animation.
-        let dt = ((now - self.now) as f32).clamp(0.0, 0.05);
+        let dt = if self.instant { 1e3 } else { ((now - self.now) as f32).clamp(0.0, 0.05) };
         self.now = now;
         self.frame += 1;
         self.viewport = viewport;
@@ -505,11 +517,13 @@ impl Ui {
             prev_cross: 0.0,
             count: 0,
             width: (viewport.x - 2.0 * pad).max(0.0),
+            fill_from: None,
         });
     }
 
     /// Ends the frame. Paint [`draw_list`](Self::draw_list) afterwards.
     pub fn end(&mut self) -> Frame {
+        self.draw_notices();
         self.draw_toasts();
         self.draw_focus_ring();
         self.draw.flatten();

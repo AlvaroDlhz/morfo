@@ -8,6 +8,7 @@ use crate::id::Id;
 use crate::overlay::Floating;
 use crate::theme::{ACCENT, BORDER, MUTED, RAISED, TEXT};
 use crate::ui::{Key, Ui, LINE_HEIGHT};
+use crate::widgets::{Size, Variant};
 
 /// Lowercase without accents, for matching typed text against labels.
 fn fold(s: &str) -> String {
@@ -257,6 +258,104 @@ impl Ui {
         n.index = index;
         n.open = *open;
         self.strings.insert(field, query);
+        picked
+    }
+
+    /// A search that lives folded as a magnifier icon (for a toolbar or the
+    /// title bar). Clicking it — or setting `open` from outside, e.g. on
+    /// Ctrl+K — unfolds it into a text field with the focus; results drop
+    /// below as you type (accents, case and scattered letters don't matter).
+    /// With nothing typed it lists what this person picks most. Arrows and
+    /// Enter, or a click, choose; Escape or clicking elsewhere fold it back.
+    /// `items` are `(key, label)`; returns the index of the item chosen.
+    pub fn search(&mut self, key: &str, placeholder: &str, open: &mut bool, items: &[(&str, &str)], width: f32) -> Option<usize> {
+        let id = self.id(key);
+        let (field, query_id, state) = (id.child("campo"), id.child("consulta"), id.child("estado"));
+        let rows = id.child("resultado");
+        let now = self.now;
+        // Opened from outside (a shortcut): give the field the focus.
+        let n = self.nodes.entry(state).or_insert_with(crate::ui::Node::new);
+        n.touch(self.frame);
+        if *open && !n.open {
+            self.focus = Some(field);
+            self.cursor = usize::MAX;
+            self.anchor = None;
+            self.focus_claimed = true;
+        }
+        let mut query = self.strings.remove(&query_id).unwrap_or_default();
+        let mut index = self.nodes[&state].index;
+        let (up, down) = (self.keys.iter().filter(|k| **k == Key::Up).count(), self.keys.iter().filter(|k| **k == Key::Down).count());
+
+        let mut edit = None;
+        let is_open = *open;
+        let mut clicked_icon = false;
+        let saved = self.scope;
+        self.morph(key, is_open, |ui| {
+            if is_open {
+                edit = Some(ui.text_field("campo", &mut query, placeholder, width));
+            } else {
+                clicked_icon = ui.icon_button("boton", Icon::Search, Variant::Ghost, Size::Sm).clicked;
+            }
+        });
+        self.scope = saved;
+        if clicked_icon {
+            // Whatever was typed in the same instant goes into the field.
+            query.push_str(&self.typed);
+            *open = true;
+            self.focus = Some(field);
+            self.cursor = usize::MAX;
+            self.focus_claimed = true;
+        }
+
+        // Results: matches for the query, or the most used with no query.
+        let q = fold(&query);
+        let mut ranked: Vec<(usize, i32, f32)> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (k, label))| fuzzy(&fold(label), &q).map(|s| (i, s, self.profile.score(id.child(k), now))))
+            .collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.total_cmp(&a.2)).then(a.0.cmp(&b.0)));
+        ranked.truncate(7);
+        if edit.is_some_and(|e| e.changed) {
+            index = 0;
+        }
+        index = (index + down).saturating_sub(up).min(ranked.len().saturating_sub(1));
+        let mut picked = edit.filter(|e| e.submitted).and_then(|_| ranked.get(index)).map(|r| r.0);
+
+        let focused = edit.is_some_and(|e| e.focused);
+        // A press on a result moves the focus to it: keep the list until the click lands.
+        let pressing_result = self.active.is_some_and(|a| (0..ranked.len()).any(|n| rows.with(n as u64) == a));
+        let anchor = self.rect_of(field).unwrap_or_default();
+        let row_w = anchor.w.max(width) - 12.0;
+        let shown = is_open && (focused || pressing_result);
+        let mut cfg = self.menu_cfg(anchor);
+        cfg.width = Some(anchor.w.max(width));
+        let dismissed = self.floating(id.child("panel"), shown, cfg, |ui| {
+            for (n, &(i, _, _)) in ranked.iter().enumerate() {
+                if ui.option_row(rows.with(n as u64), items[i].1, row_w, n == index, false) {
+                    picked = Some(i);
+                }
+            }
+            if ranked.is_empty() {
+                ui.muted("Sin resultados");
+            }
+        });
+        if let Some(i) = picked {
+            self.learn(id.child(items[i].0), items[i].1);
+        }
+        // Fold back: a choice, Escape, a click elsewhere or losing the focus.
+        if is_open && (picked.is_some() || dismissed || (!focused && !pressing_result && !clicked_icon)) {
+            *open = false;
+            query.clear();
+            index = 0;
+            if self.focus == Some(field) {
+                self.focus = None;
+            }
+        }
+        let n = self.nodes.get_mut(&state).unwrap();
+        n.open = *open;
+        n.index = index;
+        self.strings.insert(query_id, query);
         picked
     }
 }

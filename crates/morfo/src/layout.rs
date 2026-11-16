@@ -35,6 +35,8 @@ pub(crate) struct Layout {
     pub(crate) prev_cross: f32,
     pub(crate) count: u64,
     pub(crate) width: f32,
+    /// Where the content after a [`Ui::fill`] starts, in this row.
+    pub(crate) fill_from: Option<f32>,
 }
 
 impl Ui {
@@ -116,6 +118,18 @@ impl Ui {
         self.advance(Vec2::new(avail, size.y));
     }
 
+    /// Flexible space in a row: pushes everything declared after it to the
+    /// end of the row (a toolbar's right side, a dialog's buttons). It
+    /// learns how wide that tail is from the previous frame.
+    pub fn fill(&mut self) {
+        let l = self.layouts.last().unwrap();
+        let tail = self.sizes.get(&l.id.child("morfo-fill")).map_or(0.0, |s| s.x);
+        let l = self.layouts.last_mut().unwrap();
+        let room = (l.width - l.cursor - tail).max(0.0);
+        l.cursor += room;
+        l.fill_from = Some(l.cursor);
+    }
+
     /// Empty space along the current direction.
     pub fn space(&mut self, amount: f32) {
         let l = self.layouts.last_mut().unwrap();
@@ -161,7 +175,18 @@ impl Ui {
         let below = self.draw.set_layer(layer);
         self.alpha = 1.0;
         self.clip = None;
-        self.layouts.push(Layout { id, dir: Dir::Column, origin, cursor: 0.0, gap: self.theme.gap, cross: 0.0, prev_cross: 0.0, count: 0, width });
+        self.layouts.push(Layout {
+            id,
+            dir: Dir::Column,
+            origin,
+            cursor: 0.0,
+            gap: self.theme.gap,
+            cross: 0.0,
+            prev_cross: 0.0,
+            count: 0,
+            width,
+            fill_from: None,
+        });
         f(self);
         self.layouts.truncate(depth);
         self.draw.set_layer(below);
@@ -272,10 +297,15 @@ impl Ui {
             },
             count: 0,
             width,
+            fill_from: None,
         });
         f(self);
         let l = self.layouts.pop().unwrap();
         let main = (l.cursor - l.gap).max(0.0);
+        if let Some(from) = l.fill_from {
+            // Width of what follows the fill, for next frame's fill.
+            self.sizes.insert(id.child("morfo-fill"), Vec2::new((main - from).max(0.0), 0.0));
+        }
         let size = match dir {
             Dir::Row | Dir::RowTop => Vec2::new(main, l.cross),
             Dir::Column => Vec2::new(l.cross, main),

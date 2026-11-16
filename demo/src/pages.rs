@@ -444,7 +444,12 @@ pub fn flotantes(ui: &mut Ui, s: &mut State) {
                 ui.toast(&format!("Aviso número {}", s.toasts));
             }
             ui.tooltip("toast-btn", "Se van solos, o al pulsarlos");
+            ui.toggle_button("notice-btn", "Aviso fijo", &mut s.pinned, Variant::Outline, Size::Md);
+            ui.tooltip("notice-btn", "Se queda en la esquina mientras se declare");
         });
+        if s.pinned {
+            ui.notice("fijo", "Sincronizando… Este aviso no caduca: sigue aquí hasta que lo apagues.");
+        }
         ui.row(|ui| {
             ui.muted("Opción elegida:");
             ui.label(s.option);
@@ -478,6 +483,9 @@ pub fn flotantes(ui: &mut Ui, s: &mut State) {
         "",
         "let opciones = [(\"renombrar\", \"Renombrar\"), (\"duplicar\", \"Duplicar\")];",
         "if let Some(i) = ui.menu(\"opciones\", \"Opciones\", &opciones) { aplicar(i); }",
+        "",
+        "ui.toast(\"Guardado\"); // se va solo",
+        "if sincronizando { ui.notice(\"sync\", \"Sincronizando…\"); } // se queda mientras se declare",
         "",
         "// El índice de esta documentación: un riel en el borde izquierdo que se",
         "// despliega al acercar el cursor y se pliega al salir o al elegir.",

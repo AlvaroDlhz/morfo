@@ -1418,6 +1418,7 @@ dependencies = [
  "accesskit",
  "accesskit_winit",
  "arboard",
+ "morfo-live",
  "morfo-skia",
  "morfo-ui",
  "morfo-wgpu",
@@ -1425,7 +1426,12 @@ dependencies = [
  "softbuffer",
  "tiny-skia",
  "winit",
+ "x11rb",
 ]
+
+[[package]]
+name = "morfo-live"
+version = "0.1.0"
 
 [[package]]
 name = "morfo-skia"

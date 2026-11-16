@@ -1,0 +1,13 @@
+[package]
+name = "morfo-live"
+description = "Live reload for morfo apps: rebuilds on save and relaunches in place, keeping the state."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["gui", "ui", "hot-reload", "live-reload", "development"]
+categories = ["gui", "development-tools"]
+
+[dependencies]

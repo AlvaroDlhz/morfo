@@ -171,7 +171,19 @@ impl Ui {
         let max = (content - height).max(0.0);
         let over = self.pointer_in(r);
         let k = self.steps[Snappy as usize];
+        if !self.scroll_ids.contains(&id) {
+            self.scroll_ids.push(id);
+        }
         let n = self.nodes.get_mut(&id).unwrap();
+        // A restored position waits for the content to be measured, and is
+        // held for a few frames while the layout finds its sizes.
+        if let Some((offset, frames)) = self.scroll_restore.get_mut(&id).filter(|_| content > 0.0) {
+            n.aux.snap(offset.clamp(0.0, max));
+            *frames -= 1;
+            if *frames == 0 {
+                self.scroll_restore.remove(&id);
+            }
+        }
         n.aux.set(n.aux.target().clamp(0.0, max));
         let anim = n.aux.tick(&k) | n.hover.drive(over as u8 as f32, false, &k);
         let (offset, hover) = (n.aux.get(), n.hover.get());
@@ -193,6 +205,7 @@ impl Ui {
         // spring smooths the travel.
         if over && self.input.wheel != 0.0 {
             let wheel = std::mem::take(&mut self.input.wheel);
+            self.scroll_restore.remove(&id);
             let n = self.nodes.get_mut(&id).unwrap();
             n.aux.set((n.aux.target() - wheel).clamp(0.0, max));
             self.animating = true;

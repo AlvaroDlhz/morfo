@@ -13,6 +13,21 @@ pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
 pub const PAGES: [&str; 11] =
     ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación", "Datos"];
 
+/// El temario: las páginas agrupadas en módulos, en el orden en que se
+/// aprenden. Cada lección es el índice de su página en [`PAGES`].
+pub const COURSE: [(&str, &[usize]); 4] =
+    [("Fundamentos", &[0, 1, 2]), ("Construir interfaces", &[3, 4, 5, 7]), ("Capas y datos", &[6, 10]), ("Lo propio de morfo", &[8, 9])];
+
+/// Las páginas en el orden del curso.
+pub fn course_order() -> Vec<usize> {
+    COURSE.iter().flat_map(|(_, pages)| pages.iter().copied()).collect()
+}
+
+/// Posición en el curso (0 = primera lección) de la página `tab`.
+pub fn lesson_of(tab: usize) -> usize {
+    course_order().iter().position(|&p| p == tab).unwrap_or(0)
+}
+
 const CITIES: [&str; 8] = ["Madrid", "Barcelona", "Valencia", "Sevilla", "Málaga", "Bilbao", "Zaragoza", "A Coruña"];
 
 const PRODUCTS: [&[&str]; 7] = [
@@ -138,9 +153,13 @@ pub struct State {
     pub tasks: Vec<String>,
     /// The command palette is open.
     pub palette: bool,
+    /// The search at the top right is unfolded.
+    pub finder: bool,
     /// Notices dismissed on the «Cajas» page (they animate out).
     pub dismissed: [bool; 3],
     pub density: bool,
+    /// The pinned notice of the «Flotantes» page is on.
+    pub pinned: bool,
 }
 
 impl Default for State {
@@ -194,8 +213,10 @@ impl Default for State {
                 .map(String::from)
                 .to_vec(),
             palette: false,
+            finder: false,
             dismissed: [false; 3],
             density: false,
+            pinned: false,
         }
     }
 }
@@ -203,8 +224,73 @@ impl Default for State {
 /// Colores de acento que se pueden elegir en la página «Controles».
 pub const ACCENTS: [u32; 6] = [0x7c6cff, 0x22c3a6, 0xff7a59, 0xf5b83d, 0xe5484d, 0x3b82f6];
 
+// Lo que una recarga en vivo (`morfo-live`) lleva a la nueva compilación:
+// lo elegido y escrito en las páginas. Lo demás empieza de nuevo.
+#[cfg(not(target_arch = "wasm32"))]
+morfo_live::persist!(State {
+    tab,
+    light,
+    level,
+    range,
+    details,
+    shape,
+    style,
+    clicks,
+    news,
+    autosave,
+    plan,
+    tags,
+    seats,
+    faq,
+    dialog,
+    toasts,
+    name,
+    city,
+    search_open,
+    query,
+    form,
+    mut_check,
+    mut_text,
+    mut_toggle,
+    btn_size,
+    follow,
+    price,
+    volume,
+    stars,
+    accent,
+    notes,
+    plan_pick,
+    city_pick,
+    city_query,
+    sort,
+    product,
+    tasks,
+    palette,
+    finder,
+    dismissed,
+    density,
+    pinned,
+});
+
+#[cfg(not(target_arch = "wasm32"))]
+impl State {
+    /// El estado que dejó la compilación anterior, en lo que aún encaje en
+    /// esta: el código puede haber cambiado por debajo (una página menos,
+    /// otro número de opciones).
+    pub fn restored(snap: &morfo_live::Snapshot) -> State {
+        let mut s = State::default();
+        s.restore(snap);
+        s.tab = s.tab.min(PAGES.len() - 1);
+        s.accent = s.accent.min(ACCENTS.len() - 1);
+        s.style = s.style.min(STYLES.len() - 1);
+        s.shape = s.shape.min(SHAPES.len() - 1);
+        s.btn_size = s.btn_size.min(Size::ALL.len() - 1);
+        s
+    }
+}
+
 /// El tema según las preferencias elegidas: claro u oscuro, y su acento.
-fn theme_of(s: &State) -> Theme {
+pub fn theme_of(s: &State) -> Theme {
     let base = if s.light { Theme::light() } else { Theme::dark() };
     base.with_accent(Color::hex(ACCENTS[s.accent]))
 }
@@ -237,66 +323,113 @@ fn forget(ui: &mut Ui, s: &mut State) {
 }
 
 /// Una página: aparece y desaparece con `reveal` y su contenido hace scroll.
-fn page(ui: &mut Ui, key: &str, scroll: &str, open: bool, f: impl FnOnce(&mut Ui)) {
+fn page(ui: &mut Ui, s: &mut State, key: &str, scroll: &str, index: usize, f: fn(&mut Ui, &mut State)) {
     let height = (ui.viewport().y - ui.top_inset() - 100.0).max(120.0);
-    ui.reveal(key, open, |ui| ui.scroll(scroll, height, f));
+    let open = s.tab == index;
+    ui.reveal(key, open, |ui| {
+        ui.scroll(scroll, height, |ui| {
+            f(ui, s);
+            lesson_footer(ui, s, key, index);
+        })
+    });
+}
+
+/// Al final de cada lección: anterior, posición en el curso y siguiente.
+fn lesson_footer(ui: &mut Ui, s: &mut State, key: &str, page: usize) {
+    let order = course_order();
+    let at = lesson_of(page);
+    ui.space(8.0);
+    ui.separator();
+    ui.scope(key, |ui| {
+        ui.row(|ui| {
+            if at > 0 && ui.button_icon("anterior", Icon::ArrowLeft, PAGES[order[at - 1]], Variant::Ghost, Size::Md).clicked {
+                s.tab = order[at - 1];
+            }
+            ui.fill();
+            ui.muted(&format!("Lección {} de {}", at + 1, order.len()));
+            if let Some(&next) = order.get(at + 1) {
+                if ui.button_icon("siguiente", Icon::ArrowRight, &format!("Siguiente: {}", PAGES[next]), Variant::Soft, Size::Md).clicked {
+                    s.tab = next;
+                }
+            }
+        });
+    });
 }
 
 pub fn build(ui: &mut Ui, s: &mut State) {
-    // La barra de la aplicación sustituye a la del gestor de ventanas: mueve,
-    // minimiza, maximiza y cierra la ventana (eso lo hace el programa).
-    let page_name = PAGES[s.tab];
-    let mut open_palette = false;
-    // Ctrl+K is wired up by the desktop host; browsers keep it for themselves.
-    let hint = if s.native_window { "Paleta de comandos (Ctrl+K)" } else { "Paleta de comandos" };
-    let header = |ui: &mut Ui, open_palette: &mut bool| {
-        ui.muted(page_name);
-        if ui.icon_button("comandos", Icon::Search, Variant::Ghost, Size::Sm).clicked {
-            *open_palette = true;
+    let order = course_order();
+    let lesson = lesson_of(s.tab);
+
+    // Lo que el buscador encuentra: todas las lecciones y algunas acciones.
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (m, (module, pages)) in COURSE.iter().enumerate() {
+        for &p in pages.iter() {
+            found.push((format!("ir-{p}"), format!("{} · Módulo {}: {module}", PAGES[p], m + 1)));
         }
-        ui.tooltip("comandos", hint);
+    }
+    found.push(("tema".into(), "Cambiar entre tema claro y oscuro".into()));
+    found.push(("aviso".into(), "Lanzar un aviso".into()));
+    found.push(("paleta".into(), "Abrir la paleta de comandos".into()));
+    found.push(("olvidar".into(), "Olvidar hábitos y progreso".into()));
+    let refs: Vec<(&str, &str)> = found.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect();
+    let hint = if s.native_window { "Buscar (Ctrl+K)" } else { "Buscar" };
+
+    // La barra de la aplicación sustituye a la del gestor de ventanas; a la
+    // derecha, el buscador plegado en una lupa.
+    let mut picked = None;
+    let place = format!("Lección {} de {} · {}", lesson + 1, order.len(), PAGES[s.tab]);
+    let header = |ui: &mut Ui, finder: &mut bool, picked: &mut Option<usize>| {
+        ui.muted(&place);
+        ui.fill();
+        *picked = ui.search("buscar", hint, finder, &refs, 320.0);
+        ui.scope("buscar", |ui| ui.tooltip("boton", hint));
     };
     if s.native_window {
-        s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| header(ui, &mut open_palette));
+        s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| header(ui, &mut s.finder, &mut picked));
     } else {
         // In a browser tab the page has no window to move: a plain header.
         ui.row(|ui| {
             ui.title("morfo · documentación");
-            header(ui, &mut open_palette);
+            header(ui, &mut s.finder, &mut picked);
         });
     }
-    if open_palette {
-        s.palette = true;
+    if let Some(i) = picked {
+        match found[i].0.as_str() {
+            "tema" => {
+                s.light = !s.light;
+                ui.set_theme(theme_of(s));
+            }
+            "aviso" => ui.toast("Aviso lanzado desde el buscador"),
+            "paleta" => s.palette = true,
+            "olvidar" => forget(ui, s),
+            k => s.tab = k.trim_start_matches("ir-").parse().unwrap_or(0),
+        }
     }
-    // El índice vive en el borde izquierdo: se despliega al acercar el cursor.
-    ui.side_nav("indice", "morfo", &PAGES, &mut s.tab);
-    ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para abrir el índice.");
+
+    // El temario vive en el borde izquierdo: se despliega al acercar el cursor.
+    let modules: Vec<(&str, Vec<&str>)> = COURSE.iter().map(|(name, pages)| (*name, pages.iter().map(|&p| PAGES[p]).collect())).collect();
+    let modules: Vec<(&str, &[&str])> = modules.iter().map(|(name, lessons)| (*name, lessons.as_slice())).collect();
+    let mut at = lesson;
+    if ui.course_nav("indice", "Curso de morfo", &modules, &mut at) {
+        s.tab = order[at];
+    }
+    ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para ver el temario.");
     ui.space(4.0);
 
-    page(ui, "page-inicio", "scroll-inicio", s.tab == 0, |ui| pages::inicio(ui, s));
+    page(ui, s, "page-inicio", "scroll-inicio", 0, pages::inicio);
+    page(ui, s, "page-botones", "scroll-botones", 1, pages::botones);
+    page(ui, s, "page-controles", "scroll-controles", 2, pages::controles);
+    page(ui, s, "page-seleccion", "scroll-seleccion", 3, pages::seleccion);
+    page(ui, s, "page-contenedores", "scroll-contenedores", 4, pages::cajas);
+    page(ui, s, "page-formas", "scroll-formas", 5, pages::formas);
+    page(ui, s, "page-flotantes", "scroll-flotantes", 6, pages::flotantes);
+    page(ui, s, "page-entrada", "scroll-entrada", 7, pages::entrada);
+    page(ui, s, "page-adaptativo", "scroll-adaptativo", 8, pages::adaptativo);
+    page(ui, s, "page-mutacion", "scroll-mutacion", 9, pages::mutacion);
+    page(ui, s, "page-datos", "scroll-datos", 10, pages::datos);
 
-    page(ui, "page-botones", "scroll-botones", s.tab == 1, |ui| pages::botones(ui, s));
-
-    page(ui, "page-controles", "scroll-controles", s.tab == 2, |ui| pages::controles(ui, s));
-
-    page(ui, "page-seleccion", "scroll-seleccion", s.tab == 3, |ui| pages::seleccion(ui, s));
-
-    page(ui, "page-contenedores", "scroll-contenedores", s.tab == 4, |ui| pages::cajas(ui, s));
-
-    page(ui, "page-formas", "scroll-formas", s.tab == 5, |ui| pages::formas(ui, s));
-
-    page(ui, "page-flotantes", "scroll-flotantes", s.tab == 6, |ui| pages::flotantes(ui, s));
-
-    page(ui, "page-entrada", "scroll-entrada", s.tab == 7, |ui| pages::entrada(ui, s));
-
-    page(ui, "page-adaptativo", "scroll-adaptativo", s.tab == 8, |ui| pages::adaptativo(ui, s));
-
-    page(ui, "page-mutacion", "scroll-mutacion", s.tab == 9, |ui| pages::mutacion(ui, s));
-
-    page(ui, "page-datos", "scroll-datos", s.tab == 10, |ui| pages::datos(ui, s));
-
-    // La paleta de comandos (Ctrl+K o el botón de la barra): con nada
-    // escrito, lo que esta persona más usa aparece primero.
+    // La paleta de comandos (desde el buscador o la página «Adaptativo»):
+    // con nada escrito, lo que esta persona más usa aparece primero.
     let mut commands: Vec<(String, String)> = PAGES.iter().enumerate().map(|(i, p)| (format!("ir-{i}"), format!("Ir a {p}"))).collect();
     commands.push(("tema".into(), "Cambiar entre tema claro y oscuro".into()));
     commands.push(("aviso".into(), "Lanzar un aviso".into()));

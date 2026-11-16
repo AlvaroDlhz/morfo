@@ -4,11 +4,13 @@
 //! they cover, and animate out as well as in: the library keeps building
 //! them while their presence spring is above zero.
 
+use crate::a11y::Role;
 use crate::anim::smoothstep;
 use crate::anim::SpringKind::{Smooth, Snappy};
 use crate::draw::DrawCmd;
 use crate::geom::{Color, Rect, Vec2};
 use crate::id::Id;
+use crate::text::wrap;
 use crate::theme::{ACCENT, MUTED};
 use crate::theme::{BG, BORDER, RAISED, SHADOW, TEXT};
 use crate::ui::{Dir, Key, Ui, LINE_HEIGHT};
@@ -18,6 +20,13 @@ pub(crate) struct Toast {
     id: Id,
     text: String,
     until: f64,
+}
+
+pub(crate) struct Notice {
+    id: Id,
+    text: String,
+    /// Last frame it was declared in; `0` once it is gone.
+    seen: u64,
 }
 
 /// How a floating panel is placed and behaves.
@@ -35,7 +44,7 @@ pub(crate) struct Floating {
     pub dim: bool,
 }
 
-fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
+pub(crate) fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
     Rect::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.w + (b.w - a.w) * t, a.h + (b.h - a.h) * t)
 }
 
@@ -225,6 +234,78 @@ impl Ui {
         self.toast_seq += 1;
         self.toasts.push(Toast { id: Id::new("morfo-toast").with(self.toast_seq), text: text.to_string(), until: self.now + 3.5 });
         self.animating = true;
+    }
+
+    /// A notice pinned to the bottom-left corner for as long as it keeps
+    /// being declared (a toast leaves by itself; this stays): work in
+    /// progress, a lost connection, a failed build. Long text wraps, and
+    /// changing the text of the same `key` morphs the notice in place.
+    pub fn notice(&mut self, key: &str, text: &str) {
+        let (id, frame) = (self.id(key), self.frame);
+        match self.notices.iter_mut().find(|n| n.id == id) {
+            Some(n) => {
+                if n.text != text {
+                    n.text.clear();
+                    n.text.push_str(text);
+                }
+                n.seen = frame;
+            }
+            None => self.notices.push(Notice { id, text: text.to_string(), seen: frame }),
+        }
+    }
+
+    /// Lays out and paints the notices; called when the frame ends.
+    pub(crate) fn draw_notices(&mut self) {
+        if self.notices.is_empty() {
+            return;
+        }
+        let mut notices = std::mem::take(&mut self.notices);
+        let vp = self.viewport();
+        let (font, pad) = (self.theme.font * 0.93, self.theme.pad);
+        let (lh, dot) = (font * LINE_HEIGHT, 8.0);
+        let (alpha, clip, cull) = (self.alpha, self.clip, self.draw.cull.take());
+        self.clip = None;
+        let below = self.draw.set_layer(2);
+        let room = ((vp.x - 36.0).min(560.0) - pad * 2.0 - dot - 8.0).max(40.0);
+        let mut bottom = vp.y - 18.0;
+        let mut lines = Vec::new();
+        for n in notices.iter_mut() {
+            let alive = n.seen == self.frame;
+            let p = self.presence_id(n.id.child("presence"), alive, Smooth);
+            if !alive && p <= 0.001 {
+                n.seen = 0;
+                continue;
+            }
+            let pc = p.clamp(0.0, 1.0);
+            wrap(&n.text, room, font, &*self.text, &mut lines);
+            let widest = lines.iter().map(|l| self.text.width(&n.text[l.start..l.end], font)).fold(0.0, f32::max);
+            let (w, h) = (widest + pad * 2.0 + dot + 8.0, lines.len() as f32 * lh + pad);
+            let (r, _) = self.enter(n.id, Rect::new(18.0, bottom - h, w, h), Smooth);
+            bottom -= (h + 8.0) * pc;
+            // It slides in from the edge it is pinned to.
+            let r = r.translate(Vec2::new((p - 1.0) * 48.0, 0.0));
+            let radius = (r.h * 0.5).min(14.0);
+            self.describe(n.id, Role::Label, &n.text, r, None, None);
+            self.draw.push(DrawCmd::Shadow { rect: r, radius, blur: 20.0, offset: Vec2::new(0.0, 8.0), color: self.pal[SHADOW].fade(pc) });
+            self.draw.rect_stroked(r, radius, self.pal[RAISED].fade(pc), self.pal[BORDER].fade(pc), 1.0);
+            // While the shape travels to a new text, the text stays inside.
+            self.draw.push(DrawCmd::PushClip { rect: r, radius });
+            let top = r.y + pad * 0.5;
+            self.draw.rect(Rect::new(r.x + pad, top + (lh - dot) * 0.5, dot, dot), dot * 0.5, self.pal[ACCENT].fade(pc));
+            for (i, l) in lines.iter().enumerate() {
+                self.draw.add_text(Vec2::new(r.x + pad + dot + 8.0, top + i as f32 * lh), font, self.pal[TEXT].fade(pc), &n.text[l.start..l.end]);
+            }
+            self.draw.push(DrawCmd::PopClip);
+            if alive {
+                self.blockers.push((2, r));
+            }
+        }
+        notices.retain(|n| n.seen != 0);
+        self.notices = notices;
+        self.draw.set_layer(below);
+        self.draw.cull = cull;
+        self.alpha = alpha;
+        self.clip = clip;
     }
 
     /// Lays out and paints the toast stack; called when the frame ends.

@@ -146,6 +146,8 @@ impl Ui {
         let saved = self.scope;
         self.scope = id;
         let gap = theme.gap;
+        // Up to the window buttons, so `ui.fill()` puts content at the right.
+        self.next_width = Some((vp.x - bw * 3.0 - gap - x0).max(0.0));
         self.group(content_id, Dir::Row, Vec2::ZERO, gap, Some(origin), f);
         self.scope = saved;
 
