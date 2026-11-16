@@ -12,7 +12,7 @@
 use crate::id::{Id, IdMap};
 
 /// How much visual weight an element has earned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Prominence {
     /// Rarely used: smallest footprint.
     Compact,

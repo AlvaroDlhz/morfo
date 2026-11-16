@@ -64,6 +64,18 @@ impl DrawList {
     pub fn text_arena(&self) -> &str {
         &self.text
     }
+    /// Position the next command of the current layer will take.
+    pub(crate) fn mark(&self) -> usize {
+        self.layers[self.layer].len()
+    }
+    /// Commands of the current layer recorded since `mark`.
+    pub(crate) fn cmds_from(&self, mark: usize) -> &[DrawCmd] {
+        &self.layers[self.layer][mark..]
+    }
+    /// Moves the commands recorded since `mark` out of the list.
+    pub(crate) fn drain_from(&mut self, mark: usize, into: &mut Vec<DrawCmd>) {
+        into.extend(self.layers[self.layer].drain(mark..));
+    }
     pub(crate) fn layer(&self) -> usize {
         self.layer
     }
@@ -129,7 +141,7 @@ impl DrawList {
     pub fn add_code(&mut self, pos: Vec2, size: f32, color: Color, text: &str) {
         self.add_text_styled(pos, size, color, text, true);
     }
-    fn add_text_styled(&mut self, pos: Vec2, size: f32, color: Color, text: &str, mono: bool) {
+    pub(crate) fn add_text_styled(&mut self, pos: Vec2, size: f32, color: Color, text: &str, mono: bool) {
         if color.a > 0.002 && !text.is_empty() {
             let cmd = DrawCmd::Text { pos, size, color, start: self.text.len() as u32, len: text.len() as u32, mono };
             if !self.hidden(&cmd) {

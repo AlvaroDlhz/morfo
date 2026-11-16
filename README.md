@@ -9,6 +9,8 @@ programa pueden acabar viendo interfaces distintas.
 | ![inicio](docs/inicio.png) | ![adaptado](docs/adaptado.png) |
 | **Diálogo que crece desde su botón** | **Controles de selección** |
 | ![dialogo](docs/dialogo.png) | ![seleccion](docs/seleccion.png) |
+| **Un botón mutando en tarjeta** | **Mutado según el uso** |
+| ![mutacion](docs/mutacion.png) | ![mutacion-uso](docs/mutacion-uso.png) |
 
 ## Ideas clave
 
@@ -17,6 +19,12 @@ programa pueden acabar viendo interfaces distintas.
   el radio, los colores y la tipografía. Reordenar, redimensionar, cambiar de
   variante o de tema es siempre una transición continua, sin escribir código
   de animación.
+- **Mutación.** Un componente puede convertirse en otro distinto (un botón en
+  un campo de texto, una casilla en una tarjeta): `ui.morph(clave, forma, …)`
+  hace viajar la forma de fondo de uno a otro (posición, tamaño, radio y
+  color) mientras el contenido se funde, y los vecinos se apartan al mismo
+  ritmo. La «forma» puede ser cualquier valor con `Hash`, incluido el peso que
+  el uso le ha dado a un elemento.
 - **Muelles analíticos.** La solución cerrada del muelle amortiguado es lineal
   en posición y velocidad, así que sus 4 coeficientes se calculan una vez por
   frame y cada valor animado avanza con 4 multiplicaciones. Exacto a cualquier
@@ -73,6 +81,7 @@ Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `close` |
 | Entrada | `text_field` (foco, cursor, Tab, Enter, Escape) |
 | Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions` |
+| Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
 
 Los flotantes se dibujan en capas superiores, bloquean lo que tapan y animan
 también su salida. Para adaptar componentes propios: `ui.affinity(key)`,
@@ -84,9 +93,9 @@ también su salida. Para adaptar componentes propios: `ui.affinity(key)`,
 cargo run --release -p morfo-demo --bin docs
 ```
 
-La documentación es una app hecha con morfo. Tiene nueve páginas (Inicio,
-Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo)
-y cada una explica un
+La documentación es una app hecha con morfo. Tiene diez páginas (Inicio,
+Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
+Mutación) y cada una explica un
 grupo de componentes, lo muestra funcionando y enseña el código que lo
 produce. Su fuente, `demo/src/lib.rs`, sirve también de ejemplo completo.
 El perfil de uso se guarda al cerrar en `~/.config/morfo-demo/profile.txt`.
@@ -104,7 +113,7 @@ cargo test -p morfo
 
 ## Medidas
 
-Con la documentación (`--release`, ventana de 900×780 a 2× = 1800×1560 px,
+Con la documentación (`--release`, ventana de 990×780 a 2× = 1980×1560 px,
 portátil de 4 núcleos con otros programas abiertos). Las produce
 `cargo run --release -p morfo-demo --bin snapshot`:
 
@@ -143,6 +152,9 @@ repintado completo.
 - Layout de filas y columnas con tamaños intrínsecos; sin rejilla.
 - Fuera de `reveal`, los flotantes y `presence`, un elemento que deja de
   declararse desaparece sin animación de salida.
+- Durante una mutación, los controles de la forma nueva ya responden en su
+  posición final, aunque aún se estén dibujando a medio camino. Lo que esa
+  forma dibuje en capas flotantes (tooltips, diálogos) no participa en el morph.
 - Solo hay backend por CPU; no hay backend GPU ni web todavía. Las
   transiciones a pantalla completa a 2× rondan los 11 ms: caben en 60 fps,
   pero con poco margen en máquinas lentas o pantallas mayores.

@@ -242,6 +242,38 @@ fn main() {
     s.ui.pointer_left();
     s.settle();
 
+    // Mutation: one component turning into another.
+    s.go(9);
+    s.click(s.ui.id("buscador").child("abrir"));
+    s.frames(7);
+    s.save("17-boton-mutando-a-campo");
+    s.settle();
+    s.ui.text_input("morfo");
+    s.settle();
+    s.save("18-buscador");
+    s.click(s.ui.id("forma").with(4));
+    s.ui.pointer_left();
+    s.frames(9);
+    s.save("19-mutando-a-tarjeta");
+    s.settle();
+    s.save("20-tarjeta");
+    // The last example is below the fold: scroll the page down to it.
+    s.ui.pointer_moved(Vec2::new(400.0, 600.0));
+    s.ui.scroll_wheel(-2000.0);
+    s.settle();
+    let export = s.ui.id("exportar-forma").child("normal");
+    for _ in 0..4 {
+        s.click(export);
+    }
+    s.ui.pointer_left();
+    s.frames(10);
+    s.save("21-boton-creciendo-a-tarjeta");
+    s.settle();
+    s.time += 4.0;
+    s.settle();
+    s.save("22-destacado");
+    s.go(5);
+
     // The incremental painter must leave exactly the pixels a full repaint would.
     s.save("16-forma");
     let mut fresh = morfo_demo::renderer();

@@ -17,6 +17,14 @@ pub struct TextEdit {
 }
 
 impl Ui {
+    /// Gives the keyboard focus to the text field `key` (declared in this
+    /// frame or the next one), with the caret at the end of its text.
+    pub fn request_focus(&mut self, key: &str) {
+        self.focus = Some(self.id(key));
+        self.cursor = usize::MAX;
+        self.focus_claimed = true;
+    }
+
     /// Single-line text field. Click to focus (the caret lands where you
     /// click), Tab moves to the next field, Escape leaves it.
     pub fn text_field(&mut self, key: &str, value: &mut String, placeholder: &str, width: f32) -> TextEdit {
@@ -53,7 +61,6 @@ impl Ui {
 
         let mut focused = self.focus == Some(id);
         if focused {
-            self.focus_claimed = true;
             let mut at = floor_boundary(value, self.cursor);
             if !self.typed.is_empty() {
                 value.insert_str(at, &self.typed);

@@ -364,3 +364,117 @@ fn suggestions_follow_habits() {
     assert!(ui.rect_of(shortcut).is_some());
     assert!(ui.rect_of(ui.id("quick").child("a")).is_none());
 }
+
+// ----- mutation -------------------------------------------------------------
+
+fn texts(ui: &Ui) -> Vec<String> {
+    let list = ui.draw_list();
+    list.commands()
+        .iter()
+        .filter_map(|c| if let DrawCmd::Text { start, len, .. } = *c { Some(list.text(start, len).to_string()) } else { None })
+        .collect()
+}
+
+#[test]
+fn a_component_mutates_into_another() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui, form: u8| {
+        ui.morph("m", form, |ui| match form {
+            0 => {
+                ui.button("b", "Short button");
+            }
+            _ => ui.card_w("c", 400.0, |ui| {
+                ui.title("Big card");
+                ui.label("with content");
+            }),
+        });
+        ui.button("below", "Below");
+    };
+    settle(&mut ui, &mut t, |ui| build(ui, 0));
+    let (m, below) = (ui.id("m"), ui.id("below"));
+    let small = ui.rect_of(m).unwrap();
+    let y0 = ui.rect_of(below).unwrap().y;
+    assert!(texts(&ui).contains(&"Short button".to_string()));
+
+    // A few frames in, both forms are on screen and the shape is in between.
+    for _ in 0..8 {
+        assert!(frame(&mut ui, &mut t, |ui| build(ui, 1)));
+    }
+    let mid = ui.rect_of(m).unwrap();
+    let now = texts(&ui);
+    assert!(now.contains(&"Short button".to_string()) && now.contains(&"Big card".to_string()), "{now:?}");
+    assert!(mid.w > small.w + 5.0 && mid.w < 395.0, "{mid:?}");
+
+    // What follows makes room smoothly, and it all settles in the new form.
+    let mut last = ui.rect_of(below).unwrap().y;
+    let mut max_step = 0.0f32;
+    for _ in 0..600 {
+        let moving = frame(&mut ui, &mut t, |ui| build(ui, 1));
+        let y = ui.rect_of(below).unwrap().y;
+        max_step = max_step.max((y - last).abs());
+        last = y;
+        if !moving {
+            break;
+        }
+    }
+    assert!(last > y0 + 20.0);
+    assert!(max_step < 12.0, "{max_step} px in one frame");
+    assert!(!texts(&ui).contains(&"Short button".to_string()));
+    assert_eq!(ui.rect_of(m).unwrap().w, 400.0);
+    // Keys inside are namespaced under the morph's key.
+    assert!(ui.rect_of(m.child("c")).is_some());
+
+    // Back again, and at rest nothing is drawn twice.
+    settle(&mut ui, &mut t, |ui| build(ui, 0));
+    assert_eq!(texts(&ui).iter().filter(|s| *s == "Short button").count(), 1);
+    assert!(!texts(&ui).contains(&"Big card".to_string()));
+}
+
+#[test]
+fn a_button_becomes_a_focused_text_field() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut open, mut query) = (false, String::new());
+    let mut build = |ui: &mut Ui| {
+        ui.morph("search", open, |ui| {
+            if !open {
+                if ui.button("open", "Search").clicked {
+                    open = true;
+                    ui.request_focus("field");
+                }
+            } else if !ui.text_field("field", &mut query, "Type", 300.0).focused && query.is_empty() {
+                open = false;
+            }
+        });
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let button = ui.id("search").child("open");
+    click(&mut ui, &mut t, button, &mut build);
+    frame(&mut ui, &mut t, &mut build);
+    assert!(ui.has_focus(), "the field arrives with the focus");
+    ui.text_input("hi");
+    settle(&mut ui, &mut t, &mut build);
+    // Leaving it empty and unfocused turns it back into the button.
+    for _ in 0..2 {
+        ui.key_pressed(Key::Backspace);
+    }
+    ui.key_pressed(Key::Escape);
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert!(!open);
+}
+
+#[test]
+fn clicking_elsewhere_drops_the_focus() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut text = String::new();
+    let mut build = |ui: &mut Ui| {
+        ui.text_field("f", &mut text, "Name", 200.0);
+        ui.button("other", "Other");
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let (field, other) = (ui.id("f"), ui.id("other"));
+    click(&mut ui, &mut t, field, &mut build);
+    assert!(ui.has_focus());
+    click(&mut ui, &mut t, other, &mut build);
+    assert!(!ui.has_focus());
+}

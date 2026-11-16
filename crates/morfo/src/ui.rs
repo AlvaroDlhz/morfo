@@ -217,6 +217,8 @@ pub struct Ui {
     wake: f64,
     pub(crate) toasts: Vec<crate::overlay::Toast>,
     pub(crate) toast_seq: u64,
+    pub(crate) morphs: IdMap<crate::morph::Morph>,
+    pub(crate) morph_buf: Vec<DrawCmd>,
 }
 
 impl Ui {
@@ -257,6 +259,8 @@ impl Ui {
             wake: f64::INFINITY,
             toasts: Vec::new(),
             toast_seq: 0,
+            morphs: IdMap::default(),
+            morph_buf: Vec::new(),
         }
     }
 
@@ -423,6 +427,8 @@ impl Ui {
         if self.frame.is_multiple_of(256) {
             let frame = self.frame;
             self.nodes.retain(|_, n| n.seen + 256 >= frame);
+            let nodes = &self.nodes;
+            self.morphs.retain(|id, _| nodes.contains_key(id));
         }
         let wake_in = self.wake.is_finite().then(|| (self.wake - self.now).max(0.0) as f32);
         Frame { animating: self.animating || again, wake_in }

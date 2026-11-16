@@ -30,6 +30,7 @@ pub mod draw;
 pub mod geom;
 pub mod id;
 mod input;
+mod morph;
 mod overlay;
 mod select;
 pub mod theme;

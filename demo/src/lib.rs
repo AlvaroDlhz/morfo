@@ -3,12 +3,13 @@
 //! que lo produce. La comparten la ventana (`docs`) y el simulador sin
 //! ventana (`snapshot`).
 
-use morfo::{Color, Profile, Size, Theme, Ui, Variant, Vec2};
+use morfo::{Color, Profile, Prominence, Size, Theme, Ui, Variant, Vec2};
 
 /// Tamaño lógico recomendado de la ventana.
-pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
+pub const WINDOW: Vec2 = Vec2::new(990.0, 780.0);
 
-pub const PAGES: [&str; 9] = ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo"];
+pub const PAGES: [&str; 10] =
+    ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación"];
 
 pub const ACTIONS: [(&str, &str); 5] =
     [("nuevo", "Nuevo"), ("abrir", "Abrir"), ("guardar", "Guardar"), ("exportar", "Exportar"), ("compartir", "Compartir")];
@@ -60,6 +61,12 @@ pub struct State {
     pub name: String,
     pub city: String,
     pub file: &'static str,
+    pub search_open: bool,
+    pub query: String,
+    pub form: usize,
+    pub mut_check: bool,
+    pub mut_text: String,
+    pub mut_toggle: bool,
 }
 
 impl Default for State {
@@ -86,8 +93,23 @@ impl Default for State {
             name: String::new(),
             city: String::new(),
             file: "ninguna",
+            search_open: false,
+            query: String::new(),
+            form: 0,
+            mut_check: true,
+            mut_text: String::new(),
+            mut_toggle: true,
         }
     }
+}
+
+/// Otra persona: perfil vacío, la interfaz vuelve a su forma inicial.
+fn forget(ui: &mut Ui, s: &mut State) {
+    let mut fresh = Profile::new();
+    fresh.half_life = ui.profile().half_life;
+    ui.set_profile(fresh);
+    s.last = "ninguna";
+    s.file = "ninguna";
 }
 
 /// Una página: aparece y desaparece con `reveal` y su contenido hace scroll.
@@ -402,12 +424,7 @@ pub fn build(ui: &mut Ui, s: &mut State) {
                 ui.muted("Última acción:");
                 ui.label(s.last);
                 if ui.button_with("olvidar", "Olvidar hábitos", Variant::Ghost, Size::Sm).clicked {
-                    // Otra persona: perfil vacío, la interfaz vuelve a su forma inicial.
-                    let mut fresh = Profile::new();
-                    fresh.half_life = ui.profile().half_life;
-                    ui.set_profile(fresh);
-                    s.last = "ninguna";
-                    s.file = "ninguna";
+                    forget(ui, s);
                 }
             });
         });
@@ -424,6 +441,105 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "// Guardar y restaurar la forma de cada persona (texto, unos 200 bytes)",
             "let texto = ui.profile().encode();",
             "ui.set_profile(Profile::decode(&texto)?);",
+        ]);
+    });
+
+    page(ui, "page-mutacion", "scroll-mutacion", s.tab == 9, |ui| {
+        ui.title("Mutación");
+        ui.muted("Un componente puede convertirse en otro: la forma viaja y cambia de tamaño mientras el contenido se funde.");
+        ui.muted("Envuelve lo que cambia en morph, con una clave y una «forma»; cuando la forma cambia, se transforma.");
+
+        ui.card("card-buscador", |ui| {
+            ui.label("Un botón que se convierte en buscador");
+            ui.muted("Púlsalo y escribe. Si lo dejas vacío y haces clic fuera (o pulsas Escape), vuelve a ser botón.");
+            let open = s.search_open;
+            ui.morph("buscador", open, |ui| {
+                if !open {
+                    if ui.button_with("abrir", "Buscar", Variant::Soft, Size::Md).clicked {
+                        s.search_open = true;
+                        ui.request_focus("campo");
+                    }
+                } else {
+                    let e = ui.text_field("campo", &mut s.query, "Escribe y pulsa Enter…", 340.0);
+                    if e.submitted && !s.query.is_empty() {
+                        ui.toast(&format!("Buscando «{}»", s.query));
+                    }
+                    if !e.focused && s.query.is_empty() {
+                        s.search_open = false;
+                    }
+                }
+            });
+        });
+
+        ui.card("card-cualquiera", |ui| {
+            ui.label("Cualquier componente en cualquier otro");
+            ui.muted("Elige una forma: el mismo elemento pasa por botón, casilla, campo, interruptor y tarjeta.");
+            ui.segmented("forma", &["Botón", "Casilla", "Campo", "Interruptor", "Tarjeta"], &mut s.form);
+            let form = s.form;
+            ui.morph("camaleon", form, |ui| match form {
+                0 => {
+                    ui.button("boton", "Soy un botón");
+                }
+                1 => {
+                    ui.checkbox("casilla", "Ahora soy una casilla", &mut s.mut_check);
+                }
+                2 => {
+                    ui.text_field("campo", &mut s.mut_text, "Ahora soy un campo de texto", 320.0);
+                }
+                3 => ui.row(|ui| {
+                    ui.toggle("interruptor", &mut s.mut_toggle);
+                    ui.label("Y ahora un interruptor");
+                }),
+                _ => ui.card_w("tarjeta", 440.0, |ui| {
+                    ui.title("Ahora soy una tarjeta");
+                    ui.muted("Con título, texto y su propio botón.");
+                    ui.button_with("accion", "Acción", Variant::Soft, Size::Sm);
+                }),
+            });
+        });
+
+        ui.card("card-uso", |ui| {
+            ui.label("Según el uso: el mismo elemento cambia de componente");
+            let level = ui.prominence("exportar");
+            let mut used = false;
+            ui.morph("exportar-forma", level, |ui| match level {
+                Prominence::Compact => used = ui.button_with("compacto", "Exportar", Variant::Ghost, Size::Sm).clicked,
+                Prominence::Regular => used = ui.button_with("normal", "Exportar", Variant::Soft, Size::Md).clicked,
+                Prominence::Featured => ui.card_w("destacado", 460.0, |ui| {
+                    ui.title("Exportar PDF");
+                    ui.muted("Lo usas a menudo, así que ha pasado de botón a tarjeta.");
+                    used = ui.button("ahora", "Exportar ahora").clicked;
+                }),
+            });
+            if used {
+                ui.record("exportar");
+                ui.toast("Exportado");
+            }
+            ui.row(|ui| {
+                let n = ui.profile().count(ui.id("exportar"));
+                ui.muted(&format!("Usado {n} veces. Hacia la cuarta, el botón se convierte en tarjeta."));
+                if ui.button_with("reiniciar-uso", "Olvidar hábitos", Variant::Ghost, Size::Sm).clicked {
+                    forget(ui, s);
+                }
+            });
+        });
+
+        ui.code(&[
+            "// Envuelve lo que cambia; cuando la «forma» cambia, uno se transforma en otro.",
+            "ui.morph(\"buscador\", abierto, |ui| {",
+            "    if !abierto {",
+            "        if ui.button(\"abrir\", \"Buscar\").clicked { abierto = true; ui.request_focus(\"campo\"); }",
+            "    } else {",
+            "        ui.text_field(\"campo\", &mut consulta, \"Escribe…\", 340.0);",
+            "    }",
+            "});",
+            "",
+            "// La forma es cualquier valor con Hash: un bool, un número, un enum...",
+            "let peso = ui.prominence(\"exportar\");",
+            "ui.morph(\"exportar-forma\", peso, |ui| match peso {",
+            "    Prominence::Featured => ui.card_w(\"tarjeta\", 460.0, |ui| { /* título, texto, botón */ }),",
+            "    _ => { ui.button(\"boton\", \"Exportar\"); }",
+            "});",
         ]);
     });
 }
