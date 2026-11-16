@@ -7,6 +7,7 @@ use morfo::theme::{ACCENT, BORDER, TEXT};
 use morfo::{Align, Color, Icon, Prominence, Size, Ui, Variant, Vec2};
 
 use crate::*;
+use morfo::Prominence as P;
 
 pub fn inicio(ui: &mut Ui, _s: &mut State) {
     ui.title("Qué es");
@@ -341,6 +342,36 @@ pub fn cajas(ui: &mut Ui, s: &mut State) {
         "ui.columns(&[1.0, 2.0], |ui, i| { /* columna i */ });",
         "ui.align(Align::End, |ui| { ui.button(\"aceptar\", \"Aceptar\"); });",
     ]);
+    ui.space(8.0);
+    ui.title("Salidas animadas");
+    ui.muted("transient anima la salida de cualquier contenido, aunque ya no se construya: se encoge, se funde y los demás cierran el hueco.");
+    ui.card("card-avisos", |ui| {
+        let notices = [
+            ("Copia de seguridad completada", "Hace 2 minutos"),
+            ("Nuevo comentario en «Portada»", "Hace 1 hora"),
+            ("Actualización disponible", "Ayer"),
+        ];
+        for (i, (title, when)) in notices.iter().enumerate() {
+            ui.transient(&format!("aviso-{i}"), !s.dismissed[i], |ui| {
+                ui.row(|ui| {
+                    ui.column(|ui| {
+                        ui.label(title);
+                        ui.muted(when);
+                    });
+                    if ui.icon_button(&format!("cerrar-{i}"), Icon::Close, Variant::Ghost, Size::Sm).clicked {
+                        s.dismissed[i] = true;
+                    }
+                });
+            });
+        }
+        if s.dismissed.iter().all(|&d| d) && ui.button_with("restaurar", "Volver a mostrar", Variant::Soft, Size::Sm).clicked {
+            s.dismissed = [false; 3];
+        }
+    });
+    ui.code(&[
+        "ui.transient(\"aviso\", visible, |ui| { ui.label(\"Copia completada\"); });",
+        "// visible = false: lo último que se vio sale animado; f ya no se llama",
+    ]);
 }
 
 pub fn formas(ui: &mut Ui, s: &mut State) {
@@ -562,6 +593,10 @@ pub fn adaptativo(ui: &mut Ui, s: &mut State) {
         if let Some(i) = ui.suggestions("atajos", "Sugerido para ti:", "actions", &ACTIONS, 2) {
             s.last = ACTIONS[i].1;
         }
+        // After «Nuevo» you always «Abrir»? It is offered before you look for it.
+        if let Some(i) = ui.predicted_action("siguiente", "Lo siguiente que sueles hacer:", "actions", &ACTIONS) {
+            s.last = ACTIONS[i].1;
+        }
         ui.separator();
         ui.row(|ui| {
             if let Some(i) = ui.adaptive_menu("archivo", "Archivo", &FILE_MENU) {
@@ -582,7 +617,90 @@ pub fn adaptativo(ui: &mut Ui, s: &mut State) {
             }
         });
     });
+    ui.space(8.0);
+    ui.title("Inicio adaptativo");
+    ui.muted("Las aplicaciones que más abres pasan delante y se hacen el doble de anchas.");
+    ui.adaptive_dashboard("inicio", &TILES, 3, |ui, i, level| {
+        let (_, name) = TILES[i];
+        ui.title(name);
+        ui.muted(match level {
+            P::Featured => "La usas a menudo",
+            P::Compact => "Casi no la usas",
+            P::Regular => "Ábrela para usarla",
+        });
+        let label = format!("Abrir {}", name.to_lowercase());
+        ui.button_with(&format!("abrir-{i}"), &label, if level == P::Featured { Variant::Solid } else { Variant::Soft }, Size::Sm).clicked
+    });
+
+    ui.space(8.0);
+    ui.title("Tus hábitos");
+    ui.muted("Todo lo que la interfaz ha aprendido de ti, por qué y cómo controlarlo.");
+    let habits = ui.habits();
+    ui.card("card-habitos", |ui| {
+        ui.row(|ui| {
+            let mut learning = !ui.profile().frozen;
+            if ui.toggle("aprender", &mut learning) {
+                ui.profile_mut().frozen = !learning;
+            }
+            ui.label(if learning { "Aprender de mi uso" } else { "Aprendizaje en pausa: nada nuevo se registra" });
+        });
+        ui.row(|ui| {
+            if ui.toggle("densidad", &mut s.density) {
+                ui.set_adaptive_density(s.density);
+            }
+            ui.label("Densidad adaptativa");
+            ui.muted(&format!("(ahora al {:.0} %: cuanto más usas la app, más compacta)", ui.density() * 100.0));
+        });
+        ui.separator();
+        if habits.is_empty() {
+            ui.muted("Aún no hay hábitos: usa un poco la documentación.");
+        }
+        let top = habits.first().map_or(1.0, |h| h.score.max(1e-3));
+        for h in habits.iter().take(6) {
+            let key = format!("habito-{:x}", h.id.0);
+            ui.scope(&key, |ui| {
+                ui.row(|ui| {
+                    ui.column(|ui| {
+                        ui.label(&h.label);
+                        ui.muted(&reason_text(ui, h.reason));
+                    });
+                });
+                ui.row(|ui| {
+                    ui.progress(h.score / top, 360.0);
+                    ui.muted(&format!("{} usos", h.count));
+                    if ui.button_with("olvidar", "Olvidar", Variant::Ghost, Size::Sm).clicked {
+                        ui.profile_mut().forget(h.id);
+                    }
+                });
+            });
+        }
+        ui.separator();
+        ui.row(|ui| {
+            if ui.button_icon("copiar-perfil", Icon::Download, "Copiar mi perfil", Variant::Soft, Size::Sm).clicked {
+                let text = ui.profile().encode();
+                ui.copy_to_clipboard(&text);
+                ui.toast("Perfil copiado: llévalo a otro equipo o guárdalo");
+            }
+            if ui.hold_button("borrar-perfil", "Mantén para borrarlo todo", 1.2, Variant::Outline, Size::Sm) {
+                forget(ui, s);
+                ui.toast("Perfil borrado");
+            }
+        });
+    });
+
     ui.code(&[
+        "// La siguiente acción habitual, ofrecida antes de que la busques",
+        "ui.predicted_action(\"siguiente\", \"Lo siguiente:\", \"acciones\", &acciones);",
+        "",
+        "// Panel de inicio: lo más usado delante y a doble ancho",
+        "ui.adaptive_dashboard(\"inicio\", &apps, 3, |ui, i, peso| ui.button(\"abrir\", \"Abrir\").clicked);",
+        "",
+        "// Control de la persona: ver, explicar, olvidar, pausar, exportar",
+        "for h in ui.habits() { /* h.label, h.count, h.reason */ }",
+        "ui.profile_mut().frozen = true;          ui.profile_mut().forget(id);",
+        "ui.set_adaptive_density(true);          // más compacta cuanto más se usa",
+        "ui.profile_mut().time_of_day = Some(desfase_utc);   // hábitos por hora del día",
+        "",
         "let acciones = [(\"nuevo\", \"Nuevo\"), (\"abrir\", \"Abrir\"), (\"guardar\", \"Guardar\")];",
         "if let Some(i) = ui.adaptive_actions(\"acciones\", &acciones) { ejecutar(i); }",
         "",
@@ -669,7 +787,7 @@ pub fn mutacion(ui: &mut Ui, s: &mut State) {
             }),
         });
         if used {
-            ui.record("exportar");
+            ui.record_named("exportar", "Exportar PDF");
             ui.toast("Exportado");
         }
         ui.row(|ui| {

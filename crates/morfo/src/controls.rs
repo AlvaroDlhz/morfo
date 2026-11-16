@@ -83,7 +83,7 @@ impl Ui {
             changed = true;
         }
         if hit.released {
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         if self.a11y_on {
             let value = format!("{:.0} % – {:.0} %", *lo * 100.0, *hi * 100.0);
@@ -148,7 +148,7 @@ impl Ui {
         self.describe_level(id, Role::Slider, label, dial, *value);
         let changed = *value != before;
         if hit.released || wheel != 0.0 {
-            self.profile.record(id, self.now);
+            self.learn(id, label);
         }
         let (snappy, smooth) = (self.steps[Snappy as usize], self.steps[Smooth as usize]);
         let n = self.nodes.get_mut(&id).unwrap();
@@ -213,7 +213,7 @@ impl Ui {
         if let (true, Some(n)) = (hit.clicked, under) {
             *value = if *value == n { 0 } else { n };
             changed = true;
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         let shown = under.unwrap_or(*value);
         let (bouncy, snappy) = (self.steps[Bouncy as usize], self.steps[Snappy as usize]);
@@ -269,7 +269,7 @@ impl Ui {
             if hit.clicked && *selected != i {
                 *selected = i;
                 changed = true;
-                self.profile.record(sid, self.now);
+                self.learn(sid, key);
             }
             if *selected == i {
                 ring = Some(cell);
@@ -322,7 +322,7 @@ impl Ui {
             }
         }
         if hit.released {
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         if self.a11y_on {
             let v = format!("x {:.2}, y {:.2}", value.x, value.y);

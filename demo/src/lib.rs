@@ -138,6 +138,9 @@ pub struct State {
     pub tasks: Vec<String>,
     /// The command palette is open.
     pub palette: bool,
+    /// Notices dismissed on the «Cajas» page (they animate out).
+    pub dismissed: [bool; 3],
+    pub density: bool,
 }
 
 impl Default for State {
@@ -191,6 +194,8 @@ impl Default for State {
                 .map(String::from)
                 .to_vec(),
             palette: false,
+            dismissed: [false; 3],
+            density: false,
         }
     }
 }
@@ -202,6 +207,24 @@ pub const ACCENTS: [u32; 6] = [0x7c6cff, 0x22c3a6, 0xff7a59, 0xf5b83d, 0xe5484d,
 fn theme_of(s: &State) -> Theme {
     let base = if s.light { Theme::light() } else { Theme::dark() };
     base.with_accent(Color::hex(ACCENTS[s.accent]))
+}
+
+/// Las aplicaciones del panel de inicio adaptativo.
+pub const TILES: [(&str, &str); 6] =
+    [("correo", "Correo"), ("calendario", "Calendario"), ("tareas", "Tareas"), ("notas", "Notas"), ("fotos", "Fotos"), ("musica", "Música")];
+
+/// Por qué la interfaz coloca algo donde lo coloca, en palabras.
+pub fn reason_text(ui: &Ui, reason: Option<morfo::Reason>) -> String {
+    use morfo::Reason;
+    match reason {
+        Some(Reason::AfterPrevious(prev)) => format!("Sueles usarlo justo después de «{}»", ui.label_of(prev).unwrap_or("otra acción")),
+        Some(Reason::TimeOfDay(b)) => {
+            format!("Lo usas sobre todo {}", ["de madrugada", "por la mañana", "por la tarde", "por la noche"][b as usize % 4])
+        }
+        Some(Reason::Frequent(n)) => format!("Lo has usado {n} veces"),
+        Some(Reason::Rare) => "Apenas lo usas: se hace pequeño".into(),
+        Some(Reason::Recent) | None => "Lo has usado hace poco".into(),
+    }
 }
 
 /// Otra persona: perfil vacío, la interfaz vuelve a su forma inicial.

@@ -25,7 +25,7 @@ impl Ui {
         self.describe(id, Role::CheckBox, label, r, None, Some(*value));
         if hit.clicked {
             *value = !*value;
-            self.profile.record(id, self.now);
+            self.learn(id, label);
         }
         let (hover, press, t) = self.drive3(id, hit.hovered, hit.held, *value as u8 as f32, Snappy);
         let (a, t) = (self.alpha * life, t.clamp(0.0, 1.0));
@@ -59,7 +59,7 @@ impl Ui {
         let picked = hit.clicked && *value != this;
         if picked {
             *value = this;
-            self.profile.record(id, self.now);
+            self.learn(id, label);
         }
         let (hover, press, t) = self.drive3(id, hit.hovered, hit.held, (*value == this) as u8 as f32, Bouncy);
         let a = self.alpha * life;
@@ -106,7 +106,7 @@ impl Ui {
             if hit.clicked && enabled {
                 *value += delta;
                 changed = true;
-                self.profile.record(id, self.now);
+                self.learn(id, key);
             }
             let (hover, press, _) = self.drive3(button, hit.hovered && enabled, hit.held && enabled, 0.0, Snappy);
             self.draw.rect(area.inset(4.0).scaled(1.0 - 0.12 * press), h, self.pal[TEXT].with_alpha(0.1 * hover * a));
@@ -150,7 +150,7 @@ impl Ui {
             self.describe(header, Role::Button, title, r, None, Some(*open == Some(i)));
             if hit.clicked {
                 *open = if *open == Some(i) { None } else { Some(i) };
-                self.profile.record(header, self.now);
+                self.learn(header, title);
             }
             let is_open = *open == Some(i);
             let (hover, _, t) = self.drive3(header, hit.hovered, hit.held, is_open as u8 as f32, Smooth);

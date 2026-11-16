@@ -280,7 +280,10 @@ impl Ui {
 
         let clicked = hit.clicked && interactive && spec.hold.is_none();
         if clicked || done {
-            self.profile.record(id, now);
+            match (spec.label, spec.icon) {
+                ("", Some(icon)) => self.learn(id, &format!("{icon:?}")),
+                (label, _) => self.learn(id, label),
+            }
         }
         (Response { clicked, hovered: hit.hovered && interactive, held: hit.held && interactive, rect: r }, done)
     }
@@ -295,6 +298,10 @@ impl Ui {
     /// A button with an icon before its label.
     pub fn button_icon(&mut self, key: &str, icon: Icon, label: &str, variant: Variant, size: Size) -> Response {
         let id = self.id(key);
+        self.button_icon_id(id, icon, label, variant, size)
+    }
+
+    pub(crate) fn button_icon_id(&mut self, id: Id, icon: Icon, label: &str, variant: Variant, size: Size) -> Response {
         let spec = Spec { label, icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None, checked: None };
         self.button_core(id, spec).0
     }

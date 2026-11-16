@@ -245,6 +245,19 @@ fn access_tree(nodes: &[AccessNode], focus: Option<Id>, scale: f64) -> TreeUpdat
     TreeUpdate { nodes: out, tree: Some(tree), focus }
 }
 
+/// Local offset from UTC in seconds (from `date`, which knows the time zone).
+fn local_utc_offset() -> f64 {
+    let out = std::process::Command::new("date").arg("+%z").output().ok();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let (sign, digits) = match text.split_at_checked(1) {
+        Some(("-", d)) => (-1.0, d),
+        Some((_, d)) => (1.0, d),
+        None => return 0.0,
+    };
+    let n: f64 = digits.parse().unwrap_or(0.0);
+    sign * ((n / 100.0).floor() * 3600.0 + (n % 100.0) * 60.0)
+}
+
 fn profile_path() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -496,6 +509,8 @@ fn main() {
         // First run: a short memory, so the adaptation is visible in seconds.
         None => ui.profile_mut().half_life = 300.0,
     }
+    // Habits by time of day, in local time.
+    ui.profile_mut().time_of_day = Some(local_utc_offset());
 
     let event_loop = EventLoop::<AccessEvent>::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);

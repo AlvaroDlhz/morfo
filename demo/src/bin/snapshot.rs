@@ -481,6 +481,55 @@ fn main() {
     s.ui.pointer_left();
     s.settle();
 
+    // The adaptive layer: the next step, the home screen, the habits panel.
+    s.go(8);
+    let bar = s.ui.id("actions");
+    for _ in 0..3 {
+        s.click(bar.child("nuevo"));
+        s.click(bar.child("abrir"));
+        s.ui.pointer_left();
+        s.time += 20.0;
+        s.settle();
+    }
+    s.click(bar.child("nuevo"));
+    s.ui.pointer_left();
+    s.settle();
+    s.save("27-siguiente-paso");
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-520.0);
+    s.settle();
+    for _ in 0..5 {
+        s.click(s.ui.id("abrir-4"));
+    }
+    s.ui.pointer_left();
+    s.settle();
+    s.save("28-inicio-adaptativo");
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-820.0);
+    s.settle();
+    s.click(s.ui.id("densidad"));
+    s.ui.pointer_left();
+    s.settle();
+    s.save("29-tus-habitos");
+    s.click(s.ui.id("densidad"));
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(5000.0);
+    s.settle();
+    s.ui.pointer_left();
+    s.settle();
+
+    // Exit animations on the «Cajas» page.
+    s.go(4);
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-5000.0);
+    s.settle();
+    s.click(s.ui.id("cerrar-1"));
+    s.frames(6);
+    s.save("30-aviso-saliendo");
+    s.ui.pointer_left();
+    s.settle();
+    s.save("31-aviso-cerrado");
+
     // The incremental painter must leave exactly the pixels a full repaint would.
     s.save("16-forma");
     let mut fresh = morfo_demo::renderer();

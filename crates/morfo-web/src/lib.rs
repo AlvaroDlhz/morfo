@@ -163,6 +163,8 @@ struct Host {
     build: Box<dyn FnMut(&mut Ui)>,
     scheduled: bool,
     frame: Option<Closure<dyn FnMut()>>,
+    /// Unix time when the page's clock started.
+    start: f64,
 }
 
 type Shared = Rc<RefCell<Host>>;
@@ -195,7 +197,7 @@ fn frame(host: &Shared) {
             h.canvas.set_width(pw);
             h.canvas.set_height(ph);
         }
-        let now = window().performance().map_or(0.0, |p| p.now() / 1000.0);
+        let now = h.start + window().performance().map_or(0.0, |p| p.now() / 1000.0);
         h.ui.begin(now, size);
         (h.build)(&mut h.ui);
         let f = h.ui.end();
@@ -269,6 +271,10 @@ pub fn run(canvas_id: &str, theme: Theme, build: impl FnMut(&mut Ui) + 'static) 
     if let Some(profile) = storage.as_ref().and_then(|s| s.get_item(PROFILE_KEY).ok().flatten()).and_then(|t| Profile::decode(&t)) {
         ui.set_profile(profile);
     }
+    // Habits by time of day, in the visitor's local time.
+    ui.profile_mut().time_of_day = Some(-js_sys::Date::new_0().get_timezone_offset() * 60.0);
+    // Time in Unix seconds, so habits age between visits.
+    let start = js_sys::Date::now() / 1000.0 - window().performance().map_or(0.0, |p| p.now() / 1000.0);
     // The keyboard goes to an invisible text area: it gets real text input
     // (mobile keyboards, dictation, input methods) that a canvas cannot.
     let input = document.create_element("textarea")?.dyn_into::<web_sys::HtmlTextAreaElement>()?;
@@ -298,6 +304,7 @@ pub fn run(canvas_id: &str, theme: Theme, build: impl FnMut(&mut Ui) + 'static) 
         build: Box::new(build),
         scheduled: false,
         frame: None,
+        start,
     }));
     let h = host.clone();
     host.borrow_mut().frame = Some(Closure::new(move || frame(&h)));

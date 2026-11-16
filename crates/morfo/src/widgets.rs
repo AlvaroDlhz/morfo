@@ -225,7 +225,7 @@ impl Ui {
         let hit = self.hit(id, r);
         if hit.clicked {
             *value = !*value;
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         self.describe(id, Role::Switch, key, r, None, Some(*value));
         let (snappy, bouncy) = (self.steps[Snappy as usize], self.steps[Bouncy as usize]);
@@ -279,7 +279,7 @@ impl Ui {
             changed = true;
         }
         if hit.released {
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         self.describe_level(id, Role::Slider, key, r, *value);
         let snappy = self.steps[Snappy as usize];
@@ -352,7 +352,7 @@ impl Ui {
             if hit.clicked && *selected != i {
                 *selected = i;
                 changed = true;
-                self.profile.record(seg_id, self.now);
+                self.learn(seg_id, label);
             }
             let on = *selected == i;
             self.describe(seg_id, Role::Tab, label, local.translate(r.min()), None, Some(on));

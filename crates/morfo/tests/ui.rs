@@ -1198,3 +1198,126 @@ fn filled_polygons_and_arcs() {
     assert_eq!(polys.iter().filter(|&&n| n == 10).count(), 3);
     assert!(polys.iter().filter(|&&n| n > 20).count() >= 2);
 }
+
+// ----- the adaptive layer -----------------------------------------------------------
+
+use morfo::Reason;
+
+#[test]
+fn habits_have_names_and_can_be_frozen_or_forgotten() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut build = |ui: &mut Ui| {
+        ui.button("save", "Guardar");
+        ui.button("open", "Abrir");
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let (save, open) = (ui.id("save"), ui.id("open"));
+    for _ in 0..3 {
+        click(&mut ui, &mut t, save, &mut build);
+    }
+    click(&mut ui, &mut t, open, &mut build);
+    let habits = ui.habits();
+    assert_eq!(habits[0].label, "Guardar");
+    assert_eq!(habits[0].count, 3);
+    assert!(matches!(habits[0].reason, Some(Reason::Frequent(3) | Reason::Recent)));
+    // Frozen: using things teaches nothing.
+    ui.profile_mut().frozen = true;
+    click(&mut ui, &mut t, open, &mut build);
+    assert_eq!(ui.profile().count(open), 1);
+    ui.profile_mut().frozen = false;
+    ui.profile_mut().forget(save);
+    assert_eq!(ui.habits().len(), 1);
+}
+
+#[test]
+fn the_next_step_is_offered() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let items = [("new", "Nuevo"), ("open", "Abrir"), ("save", "Guardar")];
+    let build = |ui: &mut Ui| {
+        ui.adaptive_actions("bar", &items);
+        ui.predicted_action("next", "Next:", "bar", &items);
+    };
+    settle(&mut ui, &mut t, build);
+    let bar = ui.id("bar");
+    let offered = |ui: &Ui| ui.rect_of(ui.id("next").child("open")).is_some();
+    // "Nuevo" then "Abrir", three times.
+    for _ in 0..3 {
+        click(&mut ui, &mut t, bar.child("new"), build);
+        click(&mut ui, &mut t, bar.child("open"), build);
+        ui.pointer_left();
+        t += 30.0;
+        settle(&mut ui, &mut t, build);
+    }
+    assert!(!offered(&ui) || ui.profile().predict(t).is_none());
+    // After "Nuevo", "Abrir" is offered right away.
+    click(&mut ui, &mut t, bar.child("new"), build);
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    assert!(offered(&ui));
+    assert_eq!(ui.why(bar.child("open")), Some(Reason::AfterPrevious(bar.child("new"))));
+}
+
+#[test]
+fn dashboard_tiles_follow_use() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let tiles = [("mail", "Mail"), ("calendar", "Calendar"), ("notes", "Notes"), ("photos", "Photos")];
+    let build = |ui: &mut Ui| {
+        ui.adaptive_dashboard("home", &tiles, 3, |ui, i, _| ui.button(&format!("open-{i}"), "Open").clicked);
+    };
+    settle(&mut ui, &mut t, build);
+    let tile = |ui: &Ui, k: &str| ui.rect_of(ui.id(k)).unwrap();
+    let (photos_before, mail_before) = (tile(&ui, "photos"), tile(&ui, "mail"));
+    assert!(photos_before.y > mail_before.y, "four tiles in rows of three");
+    for _ in 0..5 {
+        let b = ui.id("open-3");
+        click(&mut ui, &mut t, b, build);
+    }
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    let (photos, mail) = (tile(&ui, "photos"), tile(&ui, "mail"));
+    // The used tile moved to the front and grew to two columns.
+    assert!(photos.x <= mail.x && photos.y <= mail.y);
+    assert!(photos.w > mail.w * 1.8, "{} vs {}", photos.w, mail.w);
+}
+
+#[test]
+fn density_follows_experience() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.button("b", "Button");
+    };
+    ui.set_adaptive_density(true);
+    settle(&mut ui, &mut t, build);
+    let before = ui.rect_of(ui.id("b")).unwrap();
+    assert!((ui.density() - 1.0).abs() < 1e-3);
+    // A lot of use, lately.
+    for i in 0..200 {
+        ui.profile_mut().record(morfo::Id(i % 7), t);
+    }
+    settle(&mut ui, &mut t, build);
+    let after = ui.rect_of(ui.id("b")).unwrap();
+    assert!(ui.density() < 0.85, "{}", ui.density());
+    assert!(after.h < before.h && after.w < before.w);
+}
+
+#[test]
+fn anything_can_animate_out() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui, shown: bool| {
+        ui.transient("note", shown, |ui| {
+            ui.label("Saved");
+            ui.label("Your changes are safe");
+        });
+        ui.button("below", "Below");
+    };
+    settle(&mut ui, &mut t, |ui| build(ui, true));
+    let y0 = ui.rect_of(ui.id("below")).unwrap().y;
+    // Hidden: it is still drawn for a while, fading, while the gap closes.
+    for _ in 0..4 {
+        frame(&mut ui, &mut t, |ui| build(ui, false));
+    }
+    assert!(texts(&ui).contains(&"Saved".to_string()));
+    settle(&mut ui, &mut t, |ui| build(ui, false));
+    assert!(!texts(&ui).contains(&"Saved".to_string()));
+    assert!(ui.rect_of(ui.id("below")).unwrap().y < y0 - 20.0);
+}

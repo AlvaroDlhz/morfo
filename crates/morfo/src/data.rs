@@ -81,7 +81,7 @@ impl Ui {
                     Some((s, true)) if s == c => None,
                     _ => Some((c, false)),
                 };
-                self.profile.record(hid, self.now);
+                self.learn(hid, title);
             }
             let active = sort.is_some_and(|(s, _)| s == c);
             let (hover, _, on) = self.drive3(hid, hit.hovered, hit.held, active as u8 as f32, Smooth);
@@ -106,7 +106,7 @@ impl Ui {
             self.describe(rid, crate::a11y::Role::Row, rows[i].first().copied().unwrap_or(""), rr, None, None);
             if hit.clicked {
                 clicked = Some(i);
-                self.profile.record(rid, self.now);
+                self.learn(rid, rows[i].first().copied().unwrap_or(""));
             }
             let (hover, _, _) = self.drive3(rid, hit.hovered, hit.held, 0.0, Snappy);
             let ra = a * rlife;
@@ -167,7 +167,7 @@ impl Ui {
                     items[slot..=from].rotate_right(1);
                 }
                 changed = true;
-                self.profile.record(id, self.now);
+                self.learn(id, key);
             }
         }
         let dragging = dragging && self.input.down;

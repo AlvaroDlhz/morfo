@@ -26,11 +26,11 @@ pub(crate) struct Morph {
 }
 
 #[derive(Default)]
-struct Snapshot {
+pub(crate) struct Snapshot {
     cmds: Vec<DrawCmd>,
     text: String,
     points: Vec<Vec2>,
-    bounds: Rect,
+    pub(crate) bounds: Rect,
     /// Index in `cmds` of the background shape, if there is one.
     shell: Option<usize>,
 }
@@ -38,7 +38,7 @@ struct Snapshot {
 impl Snapshot {
     /// Copies `cmds` (and the strings they use) so they can be replayed in
     /// later frames. Reuses its buffers: no allocation once warmed up.
-    fn capture(&mut self, cmds: &[DrawCmd], list: &DrawList, bounds: Rect) {
+    pub(crate) fn capture(&mut self, cmds: &[DrawCmd], list: &DrawList, bounds: Rect) {
         self.cmds.clear();
         self.text.clear();
         self.points.clear();
@@ -152,25 +152,7 @@ impl Ui {
         if let Some(shell) = blend_shells(old_shell, new_shell, t) {
             emit(&mut self.draw, shell);
         }
-        for (i, &cmd) in st.was.cmds.iter().enumerate() {
-            if Some(i) == st.was.shell {
-                continue;
-            }
-            match map(cmd, st.was.bounds, r, fade_out) {
-                DrawCmd::Text { pos, size, color, start, len, mono } => {
-                    if color.a > 0.002 && size > 0.5 {
-                        let text = &st.was.text[start as usize..(start + len) as usize];
-                        self.draw.add_text_styled(pos, size, color, text, mono);
-                    }
-                }
-                DrawCmd::Polygon { start, len, color } => {
-                    let pts = &st.was.points[start as usize..(start + len) as usize];
-                    let mapped: Vec<Vec2> = pts.iter().map(|&p| map_point(p, st.was.bounds, r)).collect();
-                    self.draw.polygon(&mapped, color);
-                }
-                cmd => emit(&mut self.draw, cmd),
-            }
-        }
+        self.replay(&st.was, r, fade_out, st.was.shell);
         for (i, &cmd) in new.iter().enumerate() {
             if Some(i) == st.now.shell {
                 continue;
@@ -185,6 +167,32 @@ impl Ui {
         }
         self.morph_buf = new;
         self.morphs.insert(id, st);
+    }
+}
+
+impl Ui {
+    /// Draws a snapshot again, stretched from where it was onto `to` and
+    /// faded by `fade`, skipping command `skip`.
+    pub(crate) fn replay(&mut self, snap: &Snapshot, to: Rect, fade: f32, skip: Option<usize>) {
+        for (i, &cmd) in snap.cmds.iter().enumerate() {
+            if Some(i) == skip {
+                continue;
+            }
+            match map(cmd, snap.bounds, to, fade) {
+                DrawCmd::Text { pos, size, color, start, len, mono } => {
+                    if color.a > 0.002 && size > 0.5 {
+                        let text = &snap.text[start as usize..(start + len) as usize];
+                        self.draw.add_text_styled(pos, size, color, text, mono);
+                    }
+                }
+                DrawCmd::Polygon { start, len, color } => {
+                    let pts = &snap.points[start as usize..(start + len) as usize];
+                    let mapped: Vec<Vec2> = pts.iter().map(|&p| map_point(p, snap.bounds, to)).collect();
+                    self.draw.polygon(&mapped, color);
+                }
+                cmd => emit(&mut self.draw, cmd),
+            }
+        }
     }
 }
 

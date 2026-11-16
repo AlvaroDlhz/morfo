@@ -175,7 +175,7 @@ impl Ui {
         let pos = Vec2::new(r.x + self.theme.pad * 0.8, r.y + (r.h - font * LINE_HEIGHT) * 0.5);
         self.draw.add_text(pos, font, self.pal[color].fade(a), label);
         if hit.clicked {
-            self.profile.record(id, self.now);
+            self.learn(id, label);
         }
         hit.clicked
     }
@@ -358,7 +358,7 @@ impl Ui {
                 chosen = true;
                 changed = *selected != i;
                 *selected = i;
-                self.profile.record(row_id, now);
+                self.learn(row_id, label);
             }
             let hovered = hit.as_ref().is_some_and(|h| h.hovered);
             let n = self.nodes.entry(row_id).or_insert_with(crate::ui::Node::new);

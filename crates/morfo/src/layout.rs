@@ -10,6 +10,8 @@ use crate::ui::{Node, Ui};
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Dir {
     Row,
+    /// A row whose children align to its top instead of its middle.
+    RowTop,
     Column,
     /// Cells of equal width, `n` per row, filled left to right.
     Grid(u16),
@@ -41,6 +43,14 @@ impl Ui {
         let id = self.auto_id();
         let gap = self.theme.gap;
         let (_, size) = self.group(id, Dir::Row, Vec2::ZERO, gap, None, f);
+        self.advance(size);
+    }
+
+    /// Lays children out left to right, aligned to the top.
+    pub fn row_top(&mut self, f: impl FnOnce(&mut Ui)) {
+        let id = self.auto_id();
+        let gap = self.theme.gap;
+        let (_, size) = self.group(id, Dir::RowTop, Vec2::ZERO, gap, None, f);
         self.advance(size);
     }
 
@@ -204,6 +214,7 @@ impl Ui {
         match l.dir {
             Dir::Column => Vec2::new(l.origin.x, l.origin.y + l.cursor),
             Dir::Row => Vec2::new(l.origin.x + l.cursor, l.origin.y + ((l.prev_cross - size.y) * 0.5).max(0.0)),
+            Dir::RowTop => Vec2::new(l.origin.x + l.cursor, l.origin.y),
             Dir::Grid(cols) => {
                 let col = (l.count % cols as u64) as f32;
                 Vec2::new(l.origin.x + col * (l.width + l.gap), l.origin.y + l.cursor)
@@ -224,7 +235,7 @@ impl Ui {
             return;
         }
         let (main, cross) = match l.dir {
-            Dir::Row => (size.x, size.y),
+            Dir::Row | Dir::RowTop => (size.x, size.y),
             _ => (size.y, size.x),
         };
         l.cursor += main + l.gap;
@@ -256,7 +267,7 @@ impl Ui {
             gap,
             cross: 0.0,
             prev_cross: match dir {
-                Dir::Row => prev.y - 2.0 * inset.y,
+                Dir::Row | Dir::RowTop => prev.y - 2.0 * inset.y,
                 _ => prev.x - 2.0 * inset.x,
             },
             count: 0,
@@ -266,7 +277,7 @@ impl Ui {
         let l = self.layouts.pop().unwrap();
         let main = (l.cursor - l.gap).max(0.0);
         let size = match dir {
-            Dir::Row => Vec2::new(main, l.cross),
+            Dir::Row | Dir::RowTop => Vec2::new(main, l.cross),
             Dir::Column => Vec2::new(l.cross, main),
             Dir::Grid(cols) => {
                 let open_row = if !l.count.is_multiple_of(cols as u64) { l.cross + l.gap } else { 0.0 };

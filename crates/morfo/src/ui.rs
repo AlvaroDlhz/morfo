@@ -251,6 +251,14 @@ pub struct Ui {
     pub(crate) access: Vec<crate::a11y::AccessNode>,
     pub(crate) access_clicks: Vec<Id>,
     pub(crate) a11y_on: bool,
+    /// Human-readable names of the elements the profile learned about.
+    pub(crate) labels: IdMap<String>,
+    /// Last content of each transient element, for its exit animation.
+    pub(crate) transients: IdMap<crate::morph::Snapshot>,
+    /// The theme as set; `theme` is it with the current density applied.
+    pub(crate) base_theme: Theme,
+    pub(crate) density: Motion<f32>,
+    pub(crate) auto_density: bool,
 }
 
 impl Ui {
@@ -310,6 +318,11 @@ impl Ui {
             access: Vec::new(),
             access_clicks: Vec::new(),
             a11y_on: false,
+            labels: IdMap::default(),
+            transients: IdMap::default(),
+            base_theme: theme,
+            density: Motion::new(1.0),
+            auto_density: false,
         }
     }
 
@@ -322,7 +335,8 @@ impl Ui {
 
     /// Switches theme. Colors morph; nothing jumps.
     pub fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
+        self.base_theme = theme;
+        self.theme = theme.with_density(self.density.get());
         self.palette.set(theme.palette);
     }
 
@@ -451,6 +465,17 @@ impl Ui {
             SpringStep::new(Spring::BOUNCY, dt),
         ];
         self.animating = self.palette.tick(&self.steps[SpringKind::Gentle as usize]);
+        // Adaptive density: the more someone uses the interface, the more
+        // compact it gets — gradually, as everything else.
+        let target = if self.auto_density {
+            let e = self.profile.experience(now);
+            1.0 - 0.2 * e / (e + 60.0)
+        } else {
+            1.0
+        };
+        self.density.set(target);
+        self.animating |= self.density.tick(&self.steps[SpringKind::Gentle as usize]);
+        self.theme = self.base_theme.with_density(self.density.get());
         self.pal = self.palette.get();
         self.draw.clear();
         std::mem::swap(&mut self.blockers, &mut self.blockers_prev);
@@ -580,7 +605,14 @@ impl Ui {
     /// (a keyboard shortcut, a command run from elsewhere...).
     pub fn record(&mut self, key: &str) {
         let id = self.id(key);
-        self.profile.record(id, self.now);
+        self.learn(id, key);
+    }
+
+    /// Like [`record`](Self::record), with the name people know it by
+    /// (shown in [`habits`](Self::habits)).
+    pub fn record_named(&mut self, key: &str, name: &str) {
+        let id = self.id(key);
+        self.learn(id, name);
     }
 
     /// Whether the pointer is over `rect` as far as the current layer is

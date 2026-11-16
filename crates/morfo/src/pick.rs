@@ -68,7 +68,7 @@ impl Ui {
             draw_icon(&mut self.draw, Icon::Check, Vec2::new(r.right() - 18.0, r.center().y), s, self.pal[ACCENT].fade(a * mark.min(1.0)));
         }
         if hit.clicked {
-            self.profile.record(id, self.now);
+            self.learn(id, label);
         }
         hit.clicked
     }
@@ -123,7 +123,7 @@ impl Ui {
         match picked {
             Some(i) if i != *selected => {
                 *selected = i;
-                self.profile.record(id, self.now);
+                self.learn(id, key);
                 true
             }
             _ => false,
@@ -166,7 +166,7 @@ impl Ui {
             query.clear();
             query.push_str(options[i]);
             self.focus = None;
-            self.profile.record(id, self.now);
+            self.learn(id, key);
         }
         picked.is_some()
     }
@@ -245,7 +245,7 @@ impl Ui {
             index = 0;
         }
         if let Some(i) = picked {
-            self.profile.record(id.child(commands[i].0), now);
+            self.learn(id.child(commands[i].0), commands[i].1);
         }
         if picked.is_some() || dismissed {
             *open = false;

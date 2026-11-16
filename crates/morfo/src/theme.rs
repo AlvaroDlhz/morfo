@@ -59,6 +59,16 @@ impl Theme {
         t
     }
 
+    /// The same theme, denser (`density` < 1) or roomier (> 1): spacing
+    /// and control heights scale, text does not.
+    pub fn with_density(mut self, density: f32) -> Theme {
+        self.pad *= density;
+        self.gap *= density;
+        self.control *= 0.75 + 0.25 * density;
+        self.radius *= 0.6 + 0.4 * density;
+        self
+    }
+
     pub fn with_accent(mut self, accent: Color) -> Theme {
         self.palette[ACCENT] = accent;
         self
