@@ -122,6 +122,8 @@ pub struct State {
     pub maximized: bool,
     /// What the title bar asked of the window this frame (the host does it).
     pub chrome: TitleBar,
+    /// Running in a desktop window (with its own title bar), not a web page.
+    pub native_window: bool,
     pub price: (f32, f32),
     pub volume: f32,
     pub stars: u8,
@@ -173,6 +175,7 @@ impl Default for State {
             busy_until: [0.0; 4],
             maximized: false,
             chrome: TitleBar::default(),
+            native_window: true,
             price: (0.25, 0.7),
             volume: 0.62,
             stars: 3,
@@ -221,13 +224,24 @@ pub fn build(ui: &mut Ui, s: &mut State) {
     // minimiza, maximiza y cierra la ventana (eso lo hace el programa).
     let page_name = PAGES[s.tab];
     let mut open_palette = false;
-    s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| {
+    // Ctrl+K is wired up by the desktop host; browsers keep it for themselves.
+    let hint = if s.native_window { "Paleta de comandos (Ctrl+K)" } else { "Paleta de comandos" };
+    let header = |ui: &mut Ui, open_palette: &mut bool| {
         ui.muted(page_name);
         if ui.icon_button("comandos", Icon::Search, Variant::Ghost, Size::Sm).clicked {
-            open_palette = true;
+            *open_palette = true;
         }
-        ui.tooltip("comandos", "Paleta de comandos (Ctrl+K)");
-    });
+        ui.tooltip("comandos", hint);
+    };
+    if s.native_window {
+        s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| header(ui, &mut open_palette));
+    } else {
+        // In a browser tab the page has no window to move: a plain header.
+        ui.row(|ui| {
+            ui.title("morfo · documentación");
+            header(ui, &mut open_palette);
+        });
+    }
     if open_palette {
         s.palette = true;
     }
@@ -278,11 +292,13 @@ pub fn build(ui: &mut Ui, s: &mut State) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn first_font(env: &str, candidates: &[&str]) -> Option<Vec<u8>> {
     std::env::var(env).ok().into_iter().chain(candidates.iter().map(|s| s.to_string())).find_map(|p| std::fs::read(p).ok())
 }
 
 /// Fuente de interfaz del sistema (o la de `MORFO_FONT=/ruta/fuente.ttf`).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_font() -> Vec<u8> {
     first_font(
         "MORFO_FONT",
@@ -301,6 +317,7 @@ pub fn load_font() -> Vec<u8> {
 
 /// Fuente monoespaciada para el código (o `MORFO_MONO_FONT`). Si no hay
 /// ninguna, el código se dibuja con la fuente normal.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_mono_font() -> Option<Vec<u8>> {
     first_font(
         "MORFO_MONO_FONT",
@@ -315,7 +332,18 @@ pub fn load_mono_font() -> Option<Vec<u8>> {
     )
 }
 
+/// Renderizador por GPU con las fuentes del sistema ya cargadas.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn gpu_renderer(device: &morfo_wgpu::wgpu::Device, format: morfo_wgpu::wgpu::TextureFormat) -> morfo_wgpu::Renderer {
+    let mut r = morfo_wgpu::Renderer::new(device, format, load_font()).expect("fuente no válida");
+    if let Some(mono) = load_mono_font() {
+        let _ = r.set_mono_font(mono);
+    }
+    r
+}
+
 /// Renderizador con las fuentes del sistema ya cargadas.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn renderer() -> morfo_skia::Renderer {
     let mut r = morfo_skia::Renderer::new(load_font()).expect("fuente no válida");
     if let Some(mono) = load_mono_font() {

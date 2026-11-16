@@ -1,0 +1,15 @@
+[package]
+name = "morfo-web-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+morfo = { package = "morfo-ui", path = "../crates/morfo" }
+morfo-web = { path = "../crates/morfo-web" }
+morfo-demo = { path = "../demo" }
+wasm-bindgen = "0.2"

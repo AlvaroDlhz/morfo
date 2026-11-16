@@ -1,7 +1,9 @@
-//! The interactive documentation in a window (winit + softbuffer, CPU only).
+//! The interactive documentation in a window.
 //!
-//! The event loop sleeps (`ControlFlow::Wait`) and only draws when there is
-//! input or the UI reports it is still animating: at rest it uses no CPU.
+//! It draws with the GPU (wgpu) when there is one, and falls back to the
+//! CPU renderer (softbuffer) otherwise; `--cpu` forces the CPU. The event
+//! loop sleeps (`ControlFlow::Wait`) and only draws when there is input or
+//! the UI reports it is still animating: at rest it uses no CPU.
 //! The usage profile is saved on exit, so the interface you shaped comes back.
 //!
 //! It also shows how a host wires up what morfo cannot do by itself: the
@@ -11,7 +13,7 @@
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use accesskit::{Action, Node, NodeId, Toggled, Tree, TreeUpdate};
@@ -19,6 +21,7 @@ use accesskit_winit::{Adapter, Event as AccessEvent, WindowEvent as AccessWindow
 use morfo::{AccessNode, Id, Key, Modifiers, Profile, ResizeEdge, Role, Theme, Ui, Vec2};
 use morfo_demo::{build, State, WINDOW};
 use morfo_skia::{tiny_skia::Pixmap, Renderer};
+use morfo_wgpu::wgpu;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
@@ -26,17 +29,129 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
+/// Where frames are painted. There is only one, so the size of its
+/// variants does not matter.
+#[allow(clippy::large_enum_variant)]
+enum Painter {
+    Cpu {
+        surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+        pixmap: Pixmap,
+        renderer: Renderer,
+    },
+    Gpu {
+        surface: wgpu::Surface<'static>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        renderer: morfo_wgpu::Renderer,
+    },
+}
+
+impl Painter {
+    /// The GPU if asked for and available, the CPU otherwise.
+    fn new(window: &Arc<Window>, gpu: bool) -> Painter {
+        if gpu {
+            match Self::gpu(window) {
+                Ok(p) => return p,
+                Err(e) => eprintln!("GPU not available ({e}); drawing with the CPU"),
+            }
+        }
+        let context = softbuffer::Context::new(window.clone()).unwrap();
+        let mut surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
+        let size = window.inner_size();
+        let (w, h) = (size.width.max(1), size.height.max(1));
+        surface.resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap()).unwrap();
+        Painter::Cpu { surface, pixmap: Pixmap::new(w, h).unwrap(), renderer: morfo_demo::renderer() }
+    }
+
+    fn gpu(window: &Arc<Window>) -> Result<Painter, String> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+        let options = wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() };
+        let adapter = pollster::block_on(instance.request_adapter(&options)).ok_or("no adapter")?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None)).map_err(|e| e.to_string())?;
+        let size = window.inner_size();
+        let mut config = surface.get_default_config(&adapter, size.width.max(1), size.height.max(1)).ok_or("surface not supported")?;
+        config.format = morfo_wgpu::Renderer::pick_format(&surface.get_capabilities(&adapter).formats);
+        config.present_mode = wgpu::PresentMode::AutoVsync;
+        surface.configure(&device, &config);
+        let renderer = morfo_demo::gpu_renderer(&device, config.format);
+        Ok(Painter::Gpu { surface, device, queue, config, renderer })
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Painter::Cpu { .. } => "CPU",
+            Painter::Gpu { .. } => "GPU",
+        }
+    }
+
+    /// The window lost its contents (resized, uncovered): repaint it all.
+    fn invalidate(&mut self) {
+        match self {
+            Painter::Cpu { renderer, .. } => renderer.invalidate(),
+            Painter::Gpu { renderer, .. } => renderer.invalidate(),
+        }
+    }
+
+    fn paint(&mut self, ui: &Ui, w: NonZeroU32, h: NonZeroU32, scale: f32) {
+        match self {
+            Painter::Cpu { surface, pixmap, renderer } => {
+                if pixmap.width() != w.get() || pixmap.height() != h.get() {
+                    *pixmap = Pixmap::new(w.get(), h.get()).unwrap();
+                    surface.resize(w, h).unwrap();
+                }
+                let damage = renderer.render(ui.draw_list(), pixmap, scale, ui.background());
+                // Copy to the window only the rows that were repainted, when the
+                // window buffer still holds the previous frame.
+                let mut buffer = surface.buffer_mut().unwrap();
+                let rows = if buffer.age() == 1 { damage } else { Some((0, h.get())) };
+                if let Some((first, end)) = rows {
+                    let (from, to) = (first as usize * w.get() as usize, end as usize * w.get() as usize);
+                    for (dst, src) in buffer[from..to].iter_mut().zip(pixmap.data().as_chunks::<4>().0[from..to].iter()) {
+                        *dst = (src[0] as u32) << 16 | (src[1] as u32) << 8 | src[2] as u32;
+                    }
+                }
+                buffer.present().unwrap();
+            }
+            Painter::Gpu { surface, device, queue, config, renderer } => {
+                let (w, h) = (w.get(), h.get());
+                if config.width != w || config.height != h {
+                    config.width = w;
+                    config.height = h;
+                    surface.configure(device, config);
+                }
+                // An identical frame is not even presented.
+                if !renderer.changed(ui.draw_list(), (w, h), scale, ui.background()) {
+                    return;
+                }
+                let frame = match surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        surface.configure(device, config);
+                        renderer.invalidate();
+                        return;
+                    }
+                };
+                let view = frame.texture.create_view(&Default::default());
+                renderer.render(device, queue, &view, (w, h), scale, ui.background(), ui.draw_list());
+                frame.present();
+            }
+        }
+    }
+}
+
 struct Gfx {
-    window: Rc<Window>,
-    surface: softbuffer::Surface<Rc<Window>, Rc<Window>>,
-    pixmap: Pixmap,
+    window: Arc<Window>,
+    painter: Painter,
     access: Adapter,
 }
 
 struct App {
     ui: Ui,
     state: State,
-    renderer: Renderer,
+    /// Draw with the GPU when there is one.
+    gpu: bool,
     gfx: Option<Gfx>,
     proxy: EventLoopProxy<AccessEvent>,
     clipboard: Option<arboard::Clipboard>,
@@ -149,10 +264,6 @@ impl App {
         let size = gfx.window.inner_size();
         let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
         let scale = gfx.window.scale_factor() as f32;
-        if gfx.pixmap.width() != w.get() || gfx.pixmap.height() != h.get() {
-            gfx.pixmap = Pixmap::new(w.get(), h.get()).unwrap();
-            gfx.surface.resize(w, h).unwrap();
-        }
 
         self.state.maximized = gfx.window.is_maximized();
         self.ui.begin(now(), Vec2::new(size.width as f32 / scale, size.height as f32 / scale));
@@ -196,18 +307,7 @@ impl App {
         let (ui, s) = (&self.ui, gfx.window.scale_factor());
         gfx.access.update_if_active(|| access_tree(ui.access_nodes(), ui.focused(), s));
 
-        let damage = self.renderer.render(self.ui.draw_list(), &mut gfx.pixmap, scale, self.ui.background());
-        // Copy to the window only the rows that were repainted, when the
-        // window buffer still holds the previous frame.
-        let mut buffer = gfx.surface.buffer_mut().unwrap();
-        let rows = if buffer.age() == 1 { damage } else { Some((0, h.get())) };
-        if let Some((first, end)) = rows {
-            let (from, to) = (first as usize * w.get() as usize, end as usize * w.get() as usize);
-            for (dst, src) in buffer[from..to].iter_mut().zip(gfx.pixmap.data().as_chunks::<4>().0[from..to].iter()) {
-                *dst = (src[0] as u32) << 16 | (src[1] as u32) << 8 | src[2] as u32;
-            }
-        }
-        buffer.present().unwrap();
+        gfx.painter.paint(&self.ui, w, h, scale);
 
         self.wake = None;
         if frame.animating {
@@ -258,16 +358,13 @@ impl ApplicationHandler<AccessEvent> for App {
             .with_inner_size(LogicalSize::new(WINDOW.x, WINDOW.y))
             .with_decorations(false)
             .with_visible(false);
-        let window = Rc::new(el.create_window(attrs).unwrap());
+        let window = Arc::new(el.create_window(attrs).unwrap());
         let access = Adapter::with_event_loop_proxy(&window, self.proxy.clone());
         window.set_ime_allowed(true);
         window.set_visible(true);
-        let context = softbuffer::Context::new(window.clone()).unwrap();
-        let mut surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
-        let size = window.inner_size();
-        let (w, h) = (size.width.max(1), size.height.max(1));
-        surface.resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap()).unwrap();
-        self.gfx = Some(Gfx { window, surface, pixmap: Pixmap::new(w, h).unwrap(), access });
+        let painter = Painter::new(&window, self.gpu);
+        eprintln!("drawing with the {}", painter.name());
+        self.gfx = Some(Gfx { window, painter, access });
     }
 
     /// Requests from the screen reader.
@@ -312,7 +409,10 @@ impl ApplicationHandler<AccessEvent> for App {
                     el.exit();
                 }
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => window.request_redraw(),
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(false) => {
+                gfx.painter.invalidate();
+                window.request_redraw();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.to_logical::<f32>(window.scale_factor());
                 self.ui.pointer_moved(Vec2::new(p.x, p.y));
@@ -388,9 +488,9 @@ impl ApplicationHandler<AccessEvent> for App {
 }
 
 fn main() {
-    let renderer = morfo_demo::renderer();
+    let gpu = !std::env::args().any(|a| a == "--cpu");
     let mut ui = Ui::new(Theme::dark());
-    ui.set_text_measure(Box::new(renderer.measure()));
+    ui.set_text_measure(Box::new(morfo_demo::renderer().measure()));
     match std::fs::read_to_string(profile_path()).ok().and_then(|t| Profile::decode(&t)) {
         Some(profile) => ui.set_profile(profile),
         // First run: a short memory, so the adaptation is visible in seconds.
@@ -402,7 +502,7 @@ fn main() {
     let mut app = App {
         ui,
         state: State::default(),
-        renderer,
+        gpu,
         gfx: None,
         proxy: event_loop.create_proxy(),
         clipboard: arboard::Clipboard::new().ok(),

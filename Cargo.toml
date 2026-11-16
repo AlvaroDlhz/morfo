@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/morfo", "crates/morfo-skia", "demo"]
+members = ["crates/morfo", "crates/morfo-skia", "crates/morfo-wgpu", "crates/morfo-web", "demo", "web"]
 
 [workspace.package]
 version = "0.1.0"

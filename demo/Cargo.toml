@@ -7,7 +7,13 @@ publish = false
 
 [dependencies]
 morfo = { package = "morfo-ui", path = "../crates/morfo" }
+
+# The window, the renderers and the system integrations are desktop only:
+# the web version (../web) reuses this crate's interface without them.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 morfo-skia = { path = "../crates/morfo-skia" }
+morfo-wgpu = { path = "../crates/morfo-wgpu" }
+pollster = "1"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 winit = "0.30"
 softbuffer = "0.4"

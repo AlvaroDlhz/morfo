@@ -16,6 +16,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Fonts for the renderer
         run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
@@ -23,6 +24,9 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets
+      - name: Clippy (WebAssembly)
+        run: cargo clippy -p morfo-web -p morfo-web-demo --target wasm32-unknown-unknown
+      # The GPU comparison test skips itself when the runner has no GPU.
       - name: Tests
         run: cargo test --workspace
       # Drives the documentation app headlessly through every page, checks
