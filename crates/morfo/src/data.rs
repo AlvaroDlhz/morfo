@@ -50,7 +50,11 @@ impl Ui {
                     (Some(x), Some(y)) if numeric[c] => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
                     _ => cell(a).to_lowercase().cmp(&cell(b).to_lowercase()),
                 };
-                if desc { o.reverse() } else { o }
+                if desc {
+                    o.reverse()
+                } else {
+                    o
+                }
             });
         }
 
@@ -176,7 +180,11 @@ impl Ui {
                 i
             } else {
                 let without = if i > from { i - 1 } else { i };
-                if without >= slot { without + 1 } else { without }
+                if without >= slot {
+                    without + 1
+                } else {
+                    without
+                }
             };
             let target = Rect::new(r.x, r.y + pos as f32 * step, r.w, row_h);
             let (rr, rl) = self.enter(rid, target, Smooth);

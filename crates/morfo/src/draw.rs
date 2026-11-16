@@ -12,16 +12,43 @@ pub enum DrawCmd {
     /// Placeholder for a reserved slot; backends skip it.
     Nop,
     /// Rounded rectangle, optionally stroked (`stroke_width == 0` = no stroke).
-    Rect { rect: Rect, radius: f32, fill: Color, stroke: Color, stroke_width: f32 },
+    Rect {
+        rect: Rect,
+        radius: f32,
+        fill: Color,
+        stroke: Color,
+        stroke_width: f32,
+    },
     /// Soft drop shadow of a rounded rectangle.
-    Shadow { rect: Rect, radius: f32, blur: f32, offset: Vec2, color: Color },
+    Shadow {
+        rect: Rect,
+        radius: f32,
+        blur: f32,
+        offset: Vec2,
+        color: Color,
+    },
     /// Single line of text; `pos` is the top-left of its line box. Resolve the
     /// string with [`DrawList::text`]. `mono` asks for the monospaced font.
-    Text { pos: Vec2, size: f32, color: Color, start: u32, len: u32, mono: bool },
+    Text {
+        pos: Vec2,
+        size: f32,
+        color: Color,
+        start: u32,
+        len: u32,
+        mono: bool,
+    },
     /// Straight stroke with round caps (check marks, chevrons, carets).
-    Line { from: Vec2, to: Vec2, width: f32, color: Color },
+    Line {
+        from: Vec2,
+        to: Vec2,
+        width: f32,
+        color: Color,
+    },
     /// Clip everything until the matching `PopClip` to a rounded rectangle.
-    PushClip { rect: Rect, radius: f32 },
+    PushClip {
+        rect: Rect,
+        radius: f32,
+    },
     PopClip,
 }
 

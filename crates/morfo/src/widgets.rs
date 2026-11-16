@@ -67,9 +67,8 @@ impl Ui {
         let (snappy, k) = (self.steps[Snappy as usize], self.steps[aux_kind as usize]);
         let n = self.nodes.get_mut(&id).unwrap();
         let fresh = n.fresh();
-        let anim = n.hover.drive(hover as u8 as f32, fresh, &snappy)
-            | n.press.drive(press as u8 as f32, fresh, &snappy)
-            | n.aux.drive(aux, fresh, &k);
+        let anim =
+            n.hover.drive(hover as u8 as f32, fresh, &snappy) | n.press.drive(press as u8 as f32, fresh, &snappy) | n.aux.drive(aux, fresh, &k);
         let out = (n.hover.get().clamp(0.0, 1.0), n.press.get(), n.aux.get());
         self.animating |= anim;
         out
@@ -149,14 +148,9 @@ impl Ui {
         let r = r.scaled(0.97 + 0.03 * life);
         let a = self.alpha * life;
         let radius = self.theme.radius;
-        self.draw.set(
-            shadow_slot,
-            DrawCmd::Shadow { rect: r, radius, blur: 28.0, offset: Vec2::new(0.0, 10.0), color: self.pal[SHADOW].fade(a) },
-        );
-        self.draw.set(
-            bg_slot,
-            DrawCmd::Rect { rect: r, radius, fill: self.pal[SURFACE].fade(a), stroke: self.pal[BORDER].fade(a), stroke_width: 1.0 },
-        );
+        self.draw.set(shadow_slot, DrawCmd::Shadow { rect: r, radius, blur: 28.0, offset: Vec2::new(0.0, 10.0), color: self.pal[SHADOW].fade(a) });
+        self.draw
+            .set(bg_slot, DrawCmd::Rect { rect: r, radius, fill: self.pal[SURFACE].fade(a), stroke: self.pal[BORDER].fade(a), stroke_width: 1.0 });
     }
 
     /// A block of source code, one string per line, in the monospaced font.
@@ -339,7 +333,13 @@ impl Ui {
             }
             let n = self.nodes.entry(seg_id).or_insert_with(Node::new);
             let fresh = n.fresh();
-            let level = if on { 1.0 } else if hit.hovered { 0.5 } else { 0.0 };
+            let level = if on {
+                1.0
+            } else if hit.hovered {
+                0.5
+            } else {
+                0.0
+            };
             let anim = n.begin(self.frame, local.translate(r.min()), &snappy, &snappy) | n.hover.drive(level, fresh, &snappy);
             let ink = self.pal[MUTED].mix(self.pal[TEXT], n.hover.get());
             self.animating |= anim;
@@ -358,7 +358,13 @@ impl Ui {
         self.animating |= anim;
         self.draw.set(
             indicator_slot,
-            DrawCmd::Rect { rect: ind, radius: ind.h * 0.5, fill: self.pal[SURFACE].mix(self.pal[TEXT], 0.1).fade(a), stroke: Color::TRANSPARENT, stroke_width: 0.0 },
+            DrawCmd::Rect {
+                rect: ind,
+                radius: ind.h * 0.5,
+                fill: self.pal[SURFACE].mix(self.pal[TEXT], 0.1).fade(a),
+                stroke: Color::TRANSPARENT,
+                stroke_width: 0.0,
+            },
         );
         changed
     }

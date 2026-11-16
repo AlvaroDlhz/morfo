@@ -277,17 +277,29 @@ impl Renderer {
             // Rows of this strip visible through the current clip.
             let clip = (depth > 0).then(|| clips[depth.min(MAX_CLIPS) - 1]);
             let (y0, y1) = match clip {
-                Some(c) => (
-                    ((c.y * scale).round().max(0.0) as u32).clamp(first, end),
-                    ((c.bottom() * scale).round().max(0.0) as u32).clamp(first, end),
-                ),
+                Some(c) => {
+                    (((c.y * scale).round().max(0.0) as u32).clamp(first, end), ((c.bottom() * scale).round().max(0.0) as u32).clamp(first, end))
+                }
                 None => (first, end),
             };
             if y1 <= y0 || !touches(cmd, scale, y0, y1) {
                 continue;
             }
             if let DrawCmd::Text { pos, size, color, start, len, mono } = *cmd {
-                self.blit_text(rows, width, first, (y0, y1), list.text(start, len), pos.x * scale, pos.y * scale, size * scale, color, clip, scale, mono);
+                self.blit_text(
+                    rows,
+                    width,
+                    first,
+                    (y0, y1),
+                    list.text(start, len),
+                    pos.x * scale,
+                    pos.y * scale,
+                    size * scale,
+                    color,
+                    clip,
+                    scale,
+                    mono,
+                );
                 continue;
             }
             let band = &mut rows[(y0 - first) as usize * stride..(y1 - first) as usize * stride];

@@ -162,7 +162,13 @@ impl Ui {
         }
         let cap = d * (0.56 - 0.03 * press) * life;
         let cap_r = Rect::new(c.x - cap * 0.5, c.y - cap * 0.5, cap, cap);
-        self.draw.push(DrawCmd::Shadow { rect: cap_r, radius: cap * 0.5, blur: 10.0, offset: Vec2::new(0.0, 3.0), color: Color::BLACK.with_alpha(0.25 * a) });
+        self.draw.push(DrawCmd::Shadow {
+            rect: cap_r,
+            radius: cap * 0.5,
+            blur: 10.0,
+            offset: Vec2::new(0.0, 3.0),
+            color: Color::BLACK.with_alpha(0.25 * a),
+        });
         self.draw.rect_stroked(cap_r, cap * 0.5, self.pal[SURFACE].mix(self.pal[RAISED], hover).fade(a), self.pal[BORDER].fade(a), 1.0);
         let ang = START + SWEEP * t;
         let dir = Vec2::new(ang.cos(), ang.sin());

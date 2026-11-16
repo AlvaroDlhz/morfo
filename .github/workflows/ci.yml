@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Fonts for the renderer
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+      - name: Tests
+        run: cargo test --workspace
+      # Drives the documentation app headlessly through every page, checks
+      # that partial repaints match full repaints pixel for pixel, and that
+      # the interface comes to rest. The frames are kept as an artifact.
+      - name: Visual run
+        run: cargo run --release -p morfo-demo --bin snapshot
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frames
+          path: out/

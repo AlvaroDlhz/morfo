@@ -300,15 +300,7 @@ impl Ui {
             Variant::Outline => (Variant::Outline, Variant::Solid),
             Variant::Ghost => (Variant::Ghost, Variant::Soft),
         };
-        let spec = Spec {
-            label,
-            icon: Some(Icon::Check),
-            show_icon: *value,
-            variant: if *value { on } else { off },
-            size,
-            busy: false,
-            hold: None,
-        };
+        let spec = Spec { label, icon: Some(Icon::Check), show_icon: *value, variant: if *value { on } else { off }, size, busy: false, hold: None };
         let clicked = self.button_core(id, spec).0.clicked;
         if clicked {
             *value = !*value;

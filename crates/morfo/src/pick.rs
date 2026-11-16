@@ -97,7 +97,12 @@ impl Ui {
         let c = Vec2::new(r.right() - 20.0, r.center().y);
         let s = font * 0.8;
         let flip = turn.clamp(0.0, 1.0);
-        self.draw.line(c + Vec2::new(-0.3 * s, (-0.12 + 0.24 * flip) * s), c + Vec2::new(0.0, (0.18 - 0.36 * flip) * s), 2.0, self.pal[MUTED].fade(a));
+        self.draw.line(
+            c + Vec2::new(-0.3 * s, (-0.12 + 0.24 * flip) * s),
+            c + Vec2::new(0.0, (0.18 - 0.36 * flip) * s),
+            2.0,
+            self.pal[MUTED].fade(a),
+        );
         self.draw.line(c + Vec2::new(0.0, (0.18 - 0.36 * flip) * s), c + Vec2::new(0.3 * s, (-0.12 + 0.24 * flip) * s), 2.0, self.pal[MUTED].fade(a));
 
         let width = r.w - 12.0;
@@ -203,7 +208,15 @@ impl Ui {
         let vp = self.viewport();
         let width = (vp.x - 40.0).min(560.0);
         let pos = Vec2::new((vp.x - width) * 0.5, self.top_inset + 56.0);
-        let cfg = Floating { from: Rect::new(vp.x * 0.5 - 60.0, pos.y, 120.0, 40.0), pos, center: false, width: Some(width), inset: 12.0, gap: 4.0, dim: true };
+        let cfg = Floating {
+            from: Rect::new(vp.x * 0.5 - 60.0, pos.y, 120.0, 40.0),
+            pos,
+            center: false,
+            width: Some(width),
+            inset: 12.0,
+            gap: 4.0,
+            dim: true,
+        };
         let inner = width - 24.0;
         let mut picked = None;
         let mut reset = false;

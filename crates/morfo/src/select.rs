@@ -155,9 +155,8 @@ impl Ui {
             self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (r.h - font * LINE_HEIGHT) * 0.5), font, ink.fade(a), title);
             // Chevron: ">" when closed turns into "v" when open.
             let c = Vec2::new(r.right() - 20.0, r.center().y);
-            let turn = |closed: (f32, f32), opened: (f32, f32)| {
-                c + Vec2::new(closed.0 + (opened.0 - closed.0) * t, closed.1 + (opened.1 - closed.1) * t)
-            };
+            let turn =
+                |closed: (f32, f32), opened: (f32, f32)| c + Vec2::new(closed.0 + (opened.0 - closed.0) * t, closed.1 + (opened.1 - closed.1) * t);
             let (p0, p1, p2) = (turn((-2.5, -5.0), (-5.0, -2.5)), turn((2.5, 0.0), (0.0, 2.5)), turn((-2.5, 5.0), (5.0, -2.5)));
             self.draw.line(p0, p1, 2.0, ink.fade(a));
             self.draw.line(p1, p2, 2.0, ink.fade(a));

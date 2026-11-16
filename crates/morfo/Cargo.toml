@@ -1,8 +1,17 @@
 [package]
-name = "morfo"
+name = "morfo-ui"
 description = "Adaptive, fluidly morphing UI components. Renderer-agnostic, zero dependencies."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["gui", "ui", "animation", "adaptive", "widgets"]
+categories = ["gui", "rendering"]
+
+# Imported as `morfo` (the name `morfo` is taken on crates.io).
+[lib]
+name = "morfo"
 
 [dependencies]

@@ -4,8 +4,13 @@ description = "CPU renderer for morfo (tiny-skia + ab_glyph). Runs anywhere, no 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["gui", "ui", "renderer", "software-rendering"]
+categories = ["gui", "rendering"]
 
 [dependencies]
-morfo = { path = "../morfo", version = "0.1.0" }
+morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 ab_glyph = "0.2"

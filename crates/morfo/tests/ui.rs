@@ -330,9 +330,8 @@ fn scroll_clamps_and_culls() {
     let y = ui.rect_of(after).unwrap().y;
     assert!(y < 220.0);
 
-    let first_text_y = |ui: &Ui| {
-        ui.draw_list().commands().iter().find_map(|c| if let DrawCmd::Text { pos, .. } = c { Some(pos.y) } else { None }).unwrap()
-    };
+    let first_text_y =
+        |ui: &Ui| ui.draw_list().commands().iter().find_map(|c| if let DrawCmd::Text { pos, .. } = c { Some(pos.y) } else { None }).unwrap();
     let top = first_text_y(&ui);
     ui.pointer_moved(Vec2::new(60.0, 60.0));
     ui.scroll_wheel(-100_000.0);

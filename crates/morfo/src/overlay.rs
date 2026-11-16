@@ -6,10 +6,10 @@
 
 use crate::anim::smoothstep;
 use crate::anim::SpringKind::{Smooth, Snappy};
-use crate::theme::{ACCENT, MUTED};
 use crate::draw::DrawCmd;
 use crate::geom::{Color, Rect, Vec2};
 use crate::id::Id;
+use crate::theme::{ACCENT, MUTED};
 use crate::theme::{BG, BORDER, RAISED, SHADOW, TEXT};
 use crate::ui::{Dir, Key, Ui, LINE_HEIGHT};
 use crate::widgets::{Size, Variant};

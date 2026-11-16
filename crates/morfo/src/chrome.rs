@@ -120,7 +120,11 @@ impl Ui {
             self.animating |= n.hover.drive(hit.hovered as u8 as f32, fresh, &snappy) | n.press.drive(hit.held as u8 as f32, fresh, &snappy);
             let (hover, press) = (n.hover.get().clamp(0.0, 1.0), n.press.get().clamp(0.0, 1.0));
             let is_close = name == "close";
-            let fill = if is_close { Color::hex(0xe5484d).with_alpha(hover * (1.0 - 0.15 * press)) } else { pal[TEXT].with_alpha((0.08 + 0.06 * press) * hover) };
+            let fill = if is_close {
+                Color::hex(0xe5484d).with_alpha(hover * (1.0 - 0.15 * press))
+            } else {
+                pal[TEXT].with_alpha((0.08 + 0.06 * press) * hover)
+            };
             self.draw.rect(r, 0.0, fill);
             let ink = if is_close { pal[TEXT].mix(Color::WHITE, hover) } else { pal[TEXT] };
             draw_icon(&mut self.draw, icon, r.center(), (h * 0.3).round(), ink.with_alpha(0.85));

@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-morfo = { path = "../crates/morfo" }
+morfo = { package = "morfo-ui", path = "../crates/morfo" }
 morfo-skia = { path = "../crates/morfo-skia" }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 winit = "0.30"

@@ -111,12 +111,7 @@ impl Color {
     }
     /// `0xRRGGBB`
     pub const fn hex(rgb: u32) -> Self {
-        Color {
-            r: ((rgb >> 16) & 0xff) as f32 / 255.0,
-            g: ((rgb >> 8) & 0xff) as f32 / 255.0,
-            b: (rgb & 0xff) as f32 / 255.0,
-            a: 1.0,
-        }
+        Color { r: ((rgb >> 16) & 0xff) as f32 / 255.0, g: ((rgb >> 8) & 0xff) as f32 / 255.0, b: (rgb & 0xff) as f32 / 255.0, a: 1.0 }
     }
     pub const fn with_alpha(self, a: f32) -> Self {
         Color { a, ..self }
@@ -126,12 +121,7 @@ impl Color {
         Color { a: self.a * k, ..self }
     }
     pub fn mix(self, o: Color, t: f32) -> Color {
-        Color {
-            r: self.r + (o.r - self.r) * t,
-            g: self.g + (o.g - self.g) * t,
-            b: self.b + (o.b - self.b) * t,
-            a: self.a + (o.a - self.a) * t,
-        }
+        Color { r: self.r + (o.r - self.r) * t, g: self.g + (o.g - self.g) * t, b: self.b + (o.b - self.b) * t, a: self.a + (o.a - self.a) * t }
     }
     pub fn to_rgba8(self) -> [u8; 4] {
         let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;

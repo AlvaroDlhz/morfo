@@ -62,12 +62,7 @@ impl SpringStep {
             let al = z * w;
             let e = (-al * t).exp();
             let (sin, cos) = (wd * t).sin_cos();
-            SpringStep {
-                a: e * (cos + al / wd * sin),
-                b: e * sin / wd,
-                c: -e * w * w / wd * sin,
-                d: e * (cos - al / wd * sin),
-            }
+            SpringStep { a: e * (cos + al / wd * sin), b: e * sin / wd, c: -e * w * w / wd * sin, d: e * (cos - al / wd * sin) }
         } else if z <= 1.001 {
             let e = (-w * t).exp();
             SpringStep { a: e * (1.0 + w * t), b: e * t, c: -e * w * w * t, d: e * (1.0 - w * t) }
@@ -76,12 +71,7 @@ impl SpringStep {
             let (r1, r2) = (-w * (z - s), -w * (z + s));
             let (e1, e2) = ((r1 * t).exp(), (r2 * t).exp());
             let inv = 1.0 / (r2 - r1);
-            SpringStep {
-                a: (r2 * e1 - r1 * e2) * inv,
-                b: (e2 - e1) * inv,
-                c: r1 * r2 * (e1 - e2) * inv,
-                d: (r2 * e2 - r1 * e1) * inv,
-            }
+            SpringStep { a: (r2 * e1 - r1 * e2) * inv, b: (e2 - e1) * inv, c: r1 * r2 * (e1 - e2) * inv, d: (r2 * e2 - r1 * e1) * inv }
         }
     }
 
