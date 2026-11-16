@@ -20,7 +20,7 @@ winit = "0.30"
 softbuffer = "0.4"
 arboard = { version = "3", default-features = false }
 accesskit = "0.17"
-accesskit_winit = "0.23"
+accesskit_winit = "0.34"
 
 # X11 only: a window that comes back from a live reload must not take the
 # keyboard from the editor (see `appear_unfocused` in the `docs` binary).
