@@ -2,7 +2,17 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Only what the checks need: the code, nothing else.
+permissions:
+  contents: read
+
+# A new push to the same PR cancels the run still going for the old one.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always

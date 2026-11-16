@@ -178,6 +178,12 @@ repintado completo.
 - El backend recorta las formas por bandas de filas, no por rectángulos
   arbitrarios (el texto sí se recorta exacto).
 
+## Contribuir
+
+Las contribuciones son bienvenidas. Lee [CONTRIBUTING.md](CONTRIBUTING.md)
+antes de abrir un PR y respeta el [código de conducta](CODE_OF_CONDUCT.md).
+Los fallos de seguridad se informan en privado: [SECURITY.md](SECURITY.md).
+
 ## Licencia
 
 MIT o Apache-2.0, a tu elección.

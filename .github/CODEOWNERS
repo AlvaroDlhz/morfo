@@ -1,0 +1,5 @@
+# Quién revisa cada parte. GitHub pide su aprobación en los PR que la tocan.
+# Al crecer el equipo, asigna aquí responsables por área, por ejemplo:
+#   /crates/morfo-wgpu/  @persona-gpu
+#   /crates/morfo-web/   @persona-web
+*                        @AlvaroDlhz
