@@ -52,9 +52,16 @@ impl Sim {
         n
     }
 
-    /// Opens documentation page `i` and waits for it.
+    /// Brings the pointer to the left edge and waits for the index to unfold.
+    fn open_index(&mut self) {
+        self.ui.pointer_moved(Vec2::new(3.0, SIZE.y * 0.5));
+        self.settle();
+    }
+
+    /// Opens documentation page `i` from the side index and waits for it.
     fn go(&mut self, i: u64) {
-        self.click(self.ui.id("tab").with(i));
+        self.open_index();
+        self.click(self.ui.id("indice").with(i));
         self.ui.pointer_left();
         self.settle();
     }
@@ -125,6 +132,18 @@ fn main() {
     println!("entrance settled in {} frames", s.settle());
     s.save("01-inicio");
 
+    // The side index: the rail at the edge unfolds into a panel.
+    s.ui.pointer_moved(Vec2::new(3.0, SIZE.y * 0.5));
+    s.frames(6);
+    s.save("01b-indice-desplegandose");
+    s.settle();
+    s.ui.pointer_moved(s.ui.rect_of(s.ui.id("indice").with(6)).unwrap().center());
+    s.settle();
+    s.save("01c-indice-abierto");
+    s.ui.pointer_left();
+    s.time += 1.0;
+    s.settle();
+
     // Adaptive page: build a habit, then watch the toolbar reshape itself.
     s.go(8);
     let action = |s: &Sim, key: &str| s.ui.id("actions").child(key);
@@ -166,6 +185,38 @@ fn main() {
     s.ui.pointer_left();
     s.settle();
     s.save("05-botones");
+
+    // The five extra kinds, in every variant: scroll down to them.
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-520.0);
+    s.settle();
+    s.save("05b-tipos-de-boton");
+    s.click(s.ui.id("t-conmutable-0"));
+    s.click(s.ui.id("t-carga-1"));
+    s.frames(14);
+    s.save("05c-cargando-y-conmutado");
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(-420.0);
+    s.settle();
+    let r = s.ui.rect_of(s.ui.id("t-mantener-2")).unwrap();
+    s.ui.pointer_moved(r.center());
+    s.frame();
+    s.ui.pointer_pressed();
+    s.frames(36);
+    s.save("05d-manteniendo");
+    s.frames(40);
+    s.ui.pointer_released();
+    s.ui.pointer_left();
+    s.time += 3.0;
+    s.settle();
+    s.click(s.ui.id("btn-size").with(2));
+    s.ui.pointer_left();
+    s.settle();
+    s.save("05e-tipos-grandes");
+    s.ui.pointer_moved(Vec2::new(450.0, 500.0));
+    s.ui.scroll_wheel(5000.0);
+    s.ui.pointer_left();
+    s.settle();
 
     s.go(3);
     s.click(s.ui.id("autosave"));
@@ -296,7 +347,9 @@ fn main() {
     }
     s.ui.pointer_left();
     s.settle();
-    s.ui.pointer_moved(s.ui.rect_of(s.ui.id("tab").with(3)).unwrap().center());
+    s.open_index();
+    s.ui.pointer_moved(s.ui.rect_of(s.ui.id("indice").with(3)).unwrap().center());
+    s.frame();
     s.ui.pointer_pressed();
     s.frame();
     s.ui.pointer_released();

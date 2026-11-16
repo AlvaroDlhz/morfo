@@ -6,6 +6,7 @@
 
 use crate::anim::smoothstep;
 use crate::anim::SpringKind::{Smooth, Snappy};
+use crate::theme::{ACCENT, MUTED};
 use crate::draw::DrawCmd;
 use crate::geom::{Color, Rect, Vec2};
 use crate::id::Id;
@@ -270,5 +271,120 @@ impl Ui {
         self.draw.cull = cull;
         self.alpha = alpha;
         self.clip = clip;
+    }
+
+    /// A side index hidden at the left edge of the window.
+    ///
+    /// Collapsed, it is a slim rail with one dot per entry. Bringing the
+    /// pointer to the left edge (or onto the rail) unfolds it: the rail grows
+    /// into a panel and each dot grows into its row. It stays open while the
+    /// pointer is over it and folds back shortly after the pointer leaves, or
+    /// right after an entry is chosen. While open, nothing underneath reacts.
+    ///
+    /// Leave the left edge of the layout free for the rail; the default
+    /// page margin already is. Returns `true` when the selection changed.
+    pub fn side_nav(&mut self, key: &str, title: &str, items: &[&str], selected: &mut usize) -> bool {
+        /// Width of the reserved strip that opens the index.
+        const EDGE: f32 = 18.0;
+        /// Seconds it stays open after the pointer leaves.
+        const LINGER: f64 = 0.3;
+        let id = self.id(key);
+        let vp = self.viewport();
+        let theme = self.theme;
+        let (font, title_font) = (theme.font, theme.font * 1.15);
+        let row_h = (theme.control * 0.95).round();
+        let widest = items.iter().map(|l| self.text.width(l, font)).fold(self.text.width(title, title_font), f32::max);
+        let width = (widest + theme.pad * 2.0 + 16.0).max(220.0).min((vp.x - 32.0).max(60.0));
+        let full = Rect::new(8.0, 8.0, width, (vp.y - 16.0).max(0.0));
+        let dot_gap = 12.0;
+        let rail_h = items.len() as f32 * dot_gap + 16.0;
+        let rail = Rect::new(5.0, ((vp.y - rail_h) * 0.5).max(8.0), 9.0, rail_h);
+
+        // Open while the pointer is at the edge or on the open panel; linger
+        // briefly after it leaves; after a choice, stay shut until it leaves.
+        let (now, pointer) = (self.now, self.input.pointer);
+        let n = self.nodes.entry(id).or_insert_with(crate::ui::Node::new);
+        n.touch(self.frame);
+        let at_edge = pointer.is_some_and(|p| p.x < EDGE || rail.inset(-6.0).contains(p));
+        let on_panel = n.open && pointer.is_some_and(|p| full.inset(-12.0).contains(p));
+        if n.latch && !at_edge && !on_panel {
+            n.latch = false;
+        }
+        let wanted = (at_edge || on_panel) && !n.latch;
+        if wanted {
+            n.stamp = now;
+        }
+        let lingering = !wanted && !n.latch && n.open && now - n.stamp < LINGER;
+        n.open = wanted || lingering;
+        let (open, since) = (n.open, n.stamp);
+        if lingering {
+            self.wake_at(since + LINGER);
+        }
+        let p = self.presence_id(id.child("presence"), open, Smooth);
+        let pc = p.clamp(0.0, 1.0);
+        let ink = smoothstep((pc - 0.35) / 0.65);
+
+        let below = self.draw.set_layer(1);
+        let (alpha, clip, cull) = (self.alpha, self.clip, self.draw.cull.take());
+        self.alpha = 1.0;
+        self.clip = None;
+        let pal = self.pal;
+
+        // The rail grows into the panel (overshoot included: it lands softly).
+        let panel = lerp_rect(rail, full, p);
+        let radius = 4.5 + (theme.radius - 4.5) * pc;
+        let hover_rail = at_edge && !open;
+        self.draw.push(DrawCmd::Shadow { rect: panel, radius, blur: 30.0, offset: Vec2::new(6.0, 10.0), color: pal[SHADOW].fade(pc) });
+        let fill = pal[BORDER].mix(pal[TEXT], if hover_rail { 0.2 } else { 0.0 }).mix(pal[RAISED], pc);
+        self.draw.rect_stroked(panel, radius, fill, pal[BORDER].fade(pc), 1.0);
+        self.draw.push(DrawCmd::PushClip { rect: panel, radius: 0.0 });
+        self.clip = Some(panel);
+        self.draw.add_text(Vec2::new(full.x + theme.pad, full.y + theme.pad * 0.8), title_font, pal[TEXT].fade(ink), title);
+
+        let top = full.y + theme.pad * 0.8 + title_font * LINE_HEIGHT + theme.gap;
+        let (mut changed, mut chosen) = (false, false);
+        let snappy = self.steps[Snappy as usize];
+        for (i, label) in items.iter().enumerate() {
+            let row = Rect::new(full.x + 8.0, top + i as f32 * (row_h + 2.0), width - 16.0, row_h);
+            let dot = Rect::new(rail.center().x - 2.5, rail.y + 8.0 + i as f32 * dot_gap + (dot_gap - 5.0) * 0.5, 5.0, 5.0);
+            let r = lerp_rect(dot, row, p);
+            let row_id = id.with(i as u64);
+            // Rows only take clicks once they are (nearly) in place.
+            let hit = if open && pc > 0.6 { Some(self.hit(row_id, r)) } else { None };
+            if hit.as_ref().is_some_and(|h| h.clicked) {
+                chosen = true;
+                changed = *selected != i;
+                *selected = i;
+                self.profile.record(row_id, now);
+            }
+            let hovered = hit.as_ref().is_some_and(|h| h.hovered);
+            let n = self.nodes.entry(row_id).or_insert_with(crate::ui::Node::new);
+            let fresh = n.touch(self.frame);
+            n.rect.snap(r);
+            let anim = n.aux.drive((*selected == i) as u8 as f32, fresh, &snappy) | n.hover.drive(hovered as u8 as f32, fresh, &snappy);
+            let (sel, hov) = (n.aux.get().clamp(0.0, 1.0), n.hover.get().clamp(0.0, 1.0));
+            self.animating |= anim;
+            let dot_color = pal[MUTED].with_alpha(0.55).mix(pal[ACCENT], sel);
+            let row_color = pal[TEXT].with_alpha(0.07 * hov).mix(pal[ACCENT].with_alpha(0.16), sel);
+            self.draw.rect(r, 2.5 + 7.5 * pc, dot_color.mix(row_color, pc));
+            let text = pal[TEXT].mix(pal[ACCENT].mix(pal[TEXT], 0.3), sel);
+            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (r.h - font * LINE_HEIGHT) * 0.5), font, text.fade(ink), label);
+        }
+        self.draw.push(DrawCmd::PopClip);
+        if open {
+            self.blockers.push((1, panel));
+        }
+        if chosen {
+            // A choice was made: fold away even though the pointer is there.
+            let n = self.nodes.get_mut(&id).unwrap();
+            n.latch = true;
+            n.open = false;
+            self.animating = true;
+        }
+        self.draw.set_layer(below);
+        self.draw.cull = cull;
+        self.alpha = alpha;
+        self.clip = clip;
+        changed
     }
 }

@@ -11,7 +11,7 @@ use crate::theme::{Palette, ACCENT, BORDER, MUTED, ON_ACCENT, RAISED, SHADOW, SU
 use crate::ui::{Dir, Node, Response, Ui, LINE_HEIGHT};
 
 /// Visual treatment of a control. Changing it at runtime morphs the control.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Variant {
     /// Filled with the accent color: the primary action.
     #[default]
@@ -24,7 +24,7 @@ pub enum Variant {
     Ghost,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Size {
     Sm,
     #[default]
@@ -32,8 +32,16 @@ pub enum Size {
     Lg,
 }
 
+impl Size {
+    pub const ALL: [Size; 3] = [Size::Sm, Size::Md, Size::Lg];
+}
+
+impl Variant {
+    pub const ALL: [Variant; 4] = [Variant::Solid, Variant::Soft, Variant::Outline, Variant::Ghost];
+}
+
 /// (fill, hovered fill, stroke, ink)
-fn variant_colors(pal: &Palette, v: Variant) -> (Color, Color, Color, Color) {
+pub(crate) fn variant_colors(pal: &Palette, v: Variant) -> (Color, Color, Color, Color) {
     let (accent, text) = (pal[ACCENT], pal[TEXT]);
     match v {
         Variant::Solid => (accent, accent.mix(Color::WHITE, 0.14), accent.with_alpha(0.0), pal[ON_ACCENT]),
@@ -188,44 +196,8 @@ impl Ui {
     }
 
     pub(crate) fn button_id(&mut self, id: Id, label: &str, variant: Variant, size: Size) -> Response {
-        let t = self.theme;
-        let (font, h, pad) = match size {
-            Size::Sm => (t.font * 0.87, t.control * 0.78, t.pad * 0.7),
-            Size::Md => (t.font, t.control, t.pad),
-            Size::Lg => (t.font * 1.18, t.control * 1.25, t.pad * 1.45),
-        };
-        let text_w = self.text.width(label, font);
-        let target = self.alloc(Vec2::new(text_w + pad * 2.0, h));
-        let (r, life) = self.enter(id, target, Smooth);
-        let hit = self.hit(id, r);
-        let (fill, fill_hover, stroke, ink) = variant_colors(&self.pal, variant);
-
-        let (snappy, smooth) = (self.steps[Snappy as usize], self.steps[Smooth as usize]);
-        let n = self.nodes.get_mut(&id).unwrap();
-        let fresh = n.fresh();
-        let anim = n.hover.drive(hit.hovered as u8 as f32, fresh, &snappy)
-            | n.press.drive(hit.held as u8 as f32, fresh, &snappy)
-            | n.fill.drive(fill, fresh, &smooth)
-            | n.stroke.drive(stroke, fresh, &smooth)
-            | n.ink.drive(ink, fresh, &smooth)
-            | n.aux.drive(font, fresh, &smooth);
-        let (hover, press) = (n.hover.get().clamp(0.0, 1.0), n.press.get());
-        let (fill, stroke, ink, font_now) = (n.fill.get(), n.stroke.get(), n.ink.get(), n.aux.get());
-        self.animating |= anim;
-
-        let a = self.alpha * life;
-        let r = r.scaled((0.92 + 0.08 * life) * (1.0 - 0.045 * press));
-        let ink = if variant == Variant::Ghost { ink.mix(self.pal[TEXT], hover) } else { ink };
-        self.draw.rect_stroked(r, r.h * 0.5, fill.mix(fill_hover, hover).fade(a), stroke.fade(a), 1.0);
-        // The label rides the animated box and font size, so it stays centered mid-morph.
-        let w_now = text_w * font_now / font;
-        let pos = Vec2::new(r.x + (r.w - w_now) * 0.5, r.y + (r.h - font_now * LINE_HEIGHT) * 0.5);
-        self.draw.add_text(pos, font_now, ink.fade(a), label);
-
-        if hit.clicked {
-            self.profile.record(id, self.now);
-        }
-        Response { clicked: hit.clicked, hovered: hit.hovered, held: hit.held, rect: r }
+        let spec = crate::buttons::Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: None };
+        self.button_core(id, spec).0
     }
 
     /// On/off switch. Returns `true` when the user flipped it.

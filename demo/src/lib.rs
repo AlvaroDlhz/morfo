@@ -3,10 +3,10 @@
 //! que lo produce. La comparten la ventana (`docs`) y el simulador sin
 //! ventana (`snapshot`).
 
-use morfo::{Color, Profile, Prominence, Size, Theme, Ui, Variant, Vec2};
+use morfo::{Color, Icon, Profile, Prominence, Size, Theme, Ui, Variant, Vec2};
 
 /// Tamaño lógico recomendado de la ventana.
-pub const WINDOW: Vec2 = Vec2::new(990.0, 780.0);
+pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
 
 pub const PAGES: [&str; 10] =
     ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación"];
@@ -31,6 +31,24 @@ const SHAPES: [(Vec2, f32, u32); 4] = [
     (Vec2::new(150.0, 150.0), 34.0, 0xff7a59),
     (Vec2::new(420.0, 40.0), 20.0, 0xf5b83d),
 ];
+
+const VARIANT_NAMES: [&str; 4] = ["Solid", "Soft", "Outline", "Ghost"];
+
+const ICON_NAMES: [&str; 16] = [
+    "Plus", "Minus", "Close", "Check", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+    "ChevronDown", "Menu", "Search", "Home", "Download", "Play", "Pause", "Star",
+];
+
+/// One kind of button shown in its four variants, labelled.
+fn variant_row(ui: &mut Ui, title: &str, hint: &str, mut f: impl FnMut(&mut Ui, usize, Variant)) {
+    ui.label(title);
+    ui.muted(hint);
+    ui.row(|ui| {
+        for (i, v) in Variant::ALL.into_iter().enumerate() {
+            f(ui, i, v);
+        }
+    });
+}
 
 const STYLES: [(&str, Variant, Size); 4] = [
     ("Solid · Md", Variant::Solid, Size::Md),
@@ -67,6 +85,9 @@ pub struct State {
     pub mut_check: bool,
     pub mut_text: String,
     pub mut_toggle: bool,
+    pub btn_size: usize,
+    pub follow: [bool; 4],
+    pub busy_until: [f64; 4],
 }
 
 impl Default for State {
@@ -99,6 +120,9 @@ impl Default for State {
             mut_check: true,
             mut_text: String::new(),
             mut_toggle: true,
+            btn_size: 1,
+            follow: [false, true, false, true],
+            busy_until: [0.0; 4],
         }
     }
 }
@@ -114,15 +138,15 @@ fn forget(ui: &mut Ui, s: &mut State) {
 
 /// Una página: aparece y desaparece con `reveal` y su contenido hace scroll.
 fn page(ui: &mut Ui, key: &str, scroll: &str, open: bool, f: impl FnOnce(&mut Ui)) {
-    let height = (ui.viewport().y - 200.0).max(120.0);
+    let height = (ui.viewport().y - 150.0).max(120.0);
     ui.reveal(key, open, |ui| ui.scroll(scroll, height, f));
 }
 
 pub fn build(ui: &mut Ui, s: &mut State) {
+    // El índice vive en el borde izquierdo: se despliega al acercar el cursor.
+    ui.side_nav("indice", "morfo", &PAGES, &mut s.tab);
     ui.heading("morfo");
-    ui.muted("Documentación interactiva. Todo lo que ves aquí está hecho con la propia librería.");
-    ui.space(4.0);
-    ui.segmented("tab", &PAGES, &mut s.tab);
+    ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para abrir el índice.");
     ui.space(4.0);
 
     page(ui, "page-inicio", "scroll-inicio", s.tab == 0, |ui| {
@@ -181,6 +205,66 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "// La misma clave con otra variante o tamaño: el botón se transforma.",
             "let (nombre, variante, tamano) = ESTILOS[i];",
             "if ui.button_with(\"camaleon\", nombre, variante, tamano).clicked { i = (i + 1) % 4; }",
+        ]);
+
+        ui.space(8.0);
+        ui.title("Cinco tipos más");
+        ui.muted("Todos aceptan las cuatro variantes y los tres tamaños, y hacen morph al cambiar de estado.");
+        ui.row(|ui| {
+            ui.muted("Tamaño de todos:");
+            ui.segmented("btn-size", &["Sm", "Md", "Lg"], &mut s.btn_size);
+        });
+        let size = Size::ALL[s.btn_size];
+        let now = ui.now();
+        ui.card("card-tipos", |ui| {
+            variant_row(ui, "1 · Solo icono", "Redondo; para barras de herramientas.", |ui, i, v| {
+                let key = format!("t-icono-{i}");
+                ui.icon_button(&key, Icon::Star, v, size);
+                ui.tooltip(&key, VARIANT_NAMES[i]);
+            });
+            ui.separator();
+            variant_row(ui, "2 · Icono y texto", "El icono acompaña a la etiqueta.", |ui, i, v| {
+                ui.button_icon(&format!("t-ambos-{i}"), Icon::Download, VARIANT_NAMES[i], v, size);
+            });
+            ui.separator();
+            variant_row(ui, "3 · Conmutable", "Se queda pulsado: gana una variante más fuerte y una marca.", |ui, i, v| {
+                ui.toggle_button(&format!("t-conmutable-{i}"), VARIANT_NAMES[i], &mut s.follow[i], v, size);
+            });
+            ui.separator();
+            variant_row(ui, "4 · Con carga", "Púlsalo: se encoge en un círculo con indicador y vuelve al terminar.", |ui, i, v| {
+                let busy = now < s.busy_until[i];
+                if ui.loading_button(&format!("t-carga-{i}"), VARIANT_NAMES[i], busy, v, size).clicked {
+                    s.busy_until[i] = now + 2.0;
+                }
+            });
+            ui.separator();
+            variant_row(ui, "5 · Mantener para confirmar", "Mantenlo pulsado un segundo; si lo sueltas antes, se vacía.", |ui, i, v| {
+                if ui.hold_button(&format!("t-mantener-{i}"), VARIANT_NAMES[i], 1.0, v, size) {
+                    ui.toast(&format!("Confirmado ({})", VARIANT_NAMES[i]));
+                }
+            });
+        });
+        ui.card("card-iconos", |ui| {
+            ui.label("Iconos incluidos");
+            ui.muted("Dibujados con trazos: nítidos a cualquier tamaño. Deja el cursor encima para ver su nombre.");
+            ui.row(|ui| {
+                for (i, icon) in Icon::ALL.into_iter().enumerate() {
+                    let key = format!("icono-{i}");
+                    ui.icon_button(&key, icon, Variant::Ghost, Size::Sm);
+                    ui.tooltip(&key, ICON_NAMES[i]);
+                }
+            });
+        });
+        ui.code(&[
+            "ui.icon_button(\"fav\", Icon::Star, Variant::Ghost, Size::Md);",
+            "ui.button_icon(\"bajar\", Icon::Download, \"Descargar\", Variant::Soft, Size::Md);",
+            "ui.toggle_button(\"seguir\", \"Seguir\", &mut siguiendo, Variant::Outline, Size::Md);",
+            "",
+            "// Mientras `enviando` sea true: círculo con indicador, sin clics.",
+            "if ui.loading_button(\"enviar\", \"Enviar\", enviando, Variant::Solid, Size::Md).clicked { enviar(); }",
+            "",
+            "// Devuelve true una sola vez, al completar 1,5 s pulsado.",
+            "if ui.hold_button(\"borrar\", \"Mantén para borrar\", 1.5, Variant::Outline, Size::Md) { borrar(); }",
         ]);
     });
 
@@ -363,6 +447,10 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "",
             "let opciones = [(\"renombrar\", \"Renombrar\"), (\"duplicar\", \"Duplicar\")];",
             "if let Some(i) = ui.menu(\"opciones\", \"Opciones\", &opciones) { aplicar(i); }",
+            "",
+            "// El índice de esta documentación: un riel en el borde izquierdo que se",
+            "// despliega al acercar el cursor y se pliega al salir o al elegir.",
+            "ui.side_nav(\"indice\", \"morfo\", &[\"Inicio\", \"Botones\", \"Controles\"], &mut pagina);",
         ]);
     });
 

@@ -26,6 +26,7 @@
 
 pub mod adapt;
 pub mod anim;
+mod buttons;
 pub mod draw;
 pub mod geom;
 pub mod id;
@@ -38,6 +39,7 @@ pub mod ui;
 mod widgets;
 
 pub use adapt::{Profile, Prominence};
+pub use buttons::Icon;
 pub use anim::{Animatable, Motion, Spring, SpringKind, SpringStep};
 pub use draw::{DrawCmd, DrawList};
 pub use geom::{Color, Rect, Vec2};

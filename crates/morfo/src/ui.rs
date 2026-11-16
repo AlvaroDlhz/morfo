@@ -99,8 +99,14 @@ pub(crate) struct Node {
     pub aux: Motion<f32>,
     /// 0 → 1 entrance.
     pub life: Motion<f32>,
+    /// Extra widget-specific springs.
+    pub e1: Motion<f32>,
+    pub e2: Motion<f32>,
     /// Widget-specific moment in time (hover start, last edit...).
     pub stamp: f64,
+    /// Widget-specific state flags.
+    pub open: bool,
+    pub latch: bool,
     seen: u64,
     age: u32,
 }
@@ -117,7 +123,11 @@ impl Node {
             press: Motion::new(0.0),
             aux: Motion::new(0.0),
             life: Motion::new(0.0),
+            e1: Motion::new(0.0),
+            e2: Motion::new(0.0),
             stamp: 0.0,
+            open: false,
+            latch: false,
             seen: 0,
             age: 0,
         }

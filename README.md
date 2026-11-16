@@ -4,9 +4,11 @@ Componentes de interfaz en Rust donde **todo se transforma con fluidez** y la
 interfaz **se adapta a cada persona según cómo la usa**. Dos usuarios del mismo
 programa pueden acabar viendo interfaces distintas.
 
-| Documentación interactiva | Interfaz ya adaptada al uso |
+| Documentación interactiva | Índice lateral desplegado |
 | --- | --- |
-| ![inicio](docs/inicio.png) | ![adaptado](docs/adaptado.png) |
+| ![inicio](docs/inicio.png) | ![indice](docs/indice.png) |
+| **Interfaz ya adaptada al uso** | **Tipos de botón y sus variantes** |
+| ![adaptado](docs/adaptado.png) | ![botones](docs/botones.png) |
 | **Diálogo que crece desde su botón** | **Controles de selección** |
 | ![dialogo](docs/dialogo.png) | ![seleccion](docs/seleccion.png) |
 | **Un botón mutando en tarjeta** | **Mutado según el uso** |
@@ -74,11 +76,13 @@ Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
 | Grupo | Componentes |
 | --- | --- |
 | Texto | `label`, `muted`, `title`, `heading`, `text` (tamaño libre), `code` |
-| Botones | `button`, `button_with` (variantes `Solid`, `Soft`, `Outline`, `Ghost`; tamaños `Sm`, `Md`, `Lg`) |
+| Botones | `button`, `button_with`, `icon_button` (solo icono), `button_icon` (icono y texto), `toggle_button` (se queda pulsado), `loading_button` (se encoge en un indicador mientras carga), `hold_button` (mantener para confirmar). Todos con las variantes `Solid`, `Soft`, `Outline`, `Ghost` y los tamaños `Sm`, `Md`, `Lg` |
+| Iconos | `Icon`: 16 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir…) |
 | Controles | `toggle`, `slider`, `progress`, `segmented` |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
 | Cajas | `row`, `column`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `presence` |
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `close` |
+| Navegación | `side_nav` (índice oculto en el borde izquierdo que se despliega al acercar el cursor) |
 | Entrada | `text_field` (foco, cursor, Tab, Enter, Escape) |
 | Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions` |
 | Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
@@ -95,7 +99,8 @@ cargo run --release -p morfo-demo --bin docs
 
 La documentación es una app hecha con morfo. Tiene diez páginas (Inicio,
 Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
-Mutación) y cada una explica un
+Mutación), a las que se llega con un índice lateral: un riel en el borde
+izquierdo que se despliega al acercar el cursor. Cada página explica un
 grupo de componentes, lo muestra funcionando y enseña el código que lo
 produce. Su fuente, `demo/src/lib.rs`, sirve también de ejemplo completo.
 El perfil de uso se guarda al cerrar en `~/.config/morfo-demo/profile.txt`.
@@ -113,7 +118,7 @@ cargo test -p morfo
 
 ## Medidas
 
-Con la documentación (`--release`, ventana de 990×780 a 2× = 1980×1560 px,
+Con la documentación (`--release`, ventana de 900×780 a 2× = 1800×1560 px,
 portátil de 4 núcleos con otros programas abiertos). Las produce
 `cargo run --release -p morfo-demo --bin snapshot`:
 

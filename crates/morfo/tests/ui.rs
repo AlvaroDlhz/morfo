@@ -478,3 +478,161 @@ fn clicking_elsewhere_drops_the_focus() {
     click(&mut ui, &mut t, other, &mut build);
     assert!(!ui.has_focus());
 }
+
+#[test]
+fn side_nav_unfolds_from_the_edge() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (mut page, mut under) = (0usize, 0);
+    let mut build = |ui: &mut Ui| {
+        ui.side_nav("nav", "Docs", &["One", "Two", "Three"], &mut page);
+        if ui.button("content", "Content").clicked {
+            under += 1;
+        }
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let row = ui.id("nav").with(2);
+    // Collapsed, each entry is a dot on the rail.
+    assert!(ui.rect_of(row).unwrap().w < 10.0);
+
+    // Bringing the pointer to the left edge unfolds it.
+    ui.pointer_moved(Vec2::new(3.0, 300.0));
+    settle(&mut ui, &mut t, &mut build);
+    assert!(ui.rect_of(row).unwrap().w > 150.0);
+
+    // Choosing an entry selects it and folds the index, pointer or not.
+    click(&mut ui, &mut t, row, &mut build);
+    settle(&mut ui, &mut t, &mut build);
+    assert!(ui.rect_of(row).unwrap().w < 10.0);
+
+    // While open, what is underneath does not react.
+    ui.pointer_moved(Vec2::new(3.0, 300.0));
+    settle(&mut ui, &mut t, &mut build);
+    let content = ui.id("content");
+    click(&mut ui, &mut t, content, &mut build);
+
+    // Leaving it, it lingers a moment (asking to be woken), then folds.
+    ui.pointer_moved(Vec2::new(600.0, 300.0));
+    frame(&mut ui, &mut t, &mut build);
+    assert!(ui.rect_of(row).unwrap().w > 150.0);
+    t += 1.0 / 60.0;
+    ui.begin(t, VIEW);
+    build(&mut ui);
+    assert!(ui.end().wake_in.is_some());
+    t += 0.5;
+    settle(&mut ui, &mut t, &mut build);
+    assert!(ui.rect_of(row).unwrap().w < 10.0);
+    drop(build);
+    assert_eq!((page, under), (2, 0));
+}
+
+// ----- button kinds -------------------------------------------------------
+
+use morfo::{Icon, Size, Variant};
+
+#[test]
+fn every_button_kind_in_every_variant_and_size() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut on = [false; 12];
+    let build = |ui: &mut Ui, on: &mut [bool; 12]| {
+        let mut i = 0;
+        for size in Size::ALL {
+            for variant in Variant::ALL {
+                let k = |kind: &str| format!("{kind}-{i}");
+                ui.button_with(&k("plain"), "Label", variant, size);
+                ui.icon_button(&k("icon"), Icon::Star, variant, size);
+                ui.button_icon(&k("both"), Icon::Download, "Label", variant, size);
+                ui.toggle_button(&k("toggle"), "Label", &mut on[i], variant, size);
+                ui.loading_button(&k("loading"), "Label", false, variant, size);
+                ui.hold_button(&k("hold"), "Label", 1.0, variant, size);
+                i += 1;
+            }
+        }
+    };
+    settle(&mut ui, &mut t, |ui| build(ui, &mut on));
+    for i in 0..12 {
+        let w = |kind: &str| ui.rect_of(ui.id(&format!("{kind}-{i}"))).unwrap();
+        let (plain, icon, both) = (w("plain"), w("icon"), w("both"));
+        assert_eq!(icon.w, icon.h, "icon buttons are round");
+        assert!(both.w > plain.w, "the icon adds room");
+        assert_eq!(w("loading").w, plain.w);
+        assert_eq!(w("hold").w, plain.w);
+    }
+}
+
+#[test]
+fn toggle_button_stays_pressed_and_grows_a_check() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut on = false;
+    let mut build = |ui: &mut Ui| {
+        ui.toggle_button("follow", "Follow", &mut on, Variant::Outline, Size::Md);
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let id = ui.id("follow");
+    let before = ui.rect_of(id).unwrap().w;
+    click(&mut ui, &mut t, id, &mut build);
+    ui.pointer_left();
+    settle(&mut ui, &mut t, &mut build);
+    assert!(ui.rect_of(id).unwrap().w > before);
+    click(&mut ui, &mut t, id, &mut build);
+    ui.pointer_left();
+    settle(&mut ui, &mut t, &mut build);
+    assert_eq!(ui.rect_of(id).unwrap().w, before);
+    drop(build);
+    assert!(!on);
+}
+
+#[test]
+fn loading_button_turns_into_a_spinner_and_ignores_clicks() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut clicks = 0;
+    settle(&mut ui, &mut t, |ui| {
+        ui.loading_button("send", "Send", false, Variant::Solid, Size::Md);
+    });
+    let id = ui.id("send");
+    let wide = ui.rect_of(id).unwrap();
+    let mut build = |ui: &mut Ui| {
+        if ui.loading_button("send", "Send", true, Variant::Solid, Size::Md).clicked {
+            clicks += 1;
+        }
+    };
+    for _ in 0..60 {
+        // The spinner keeps turning: never at rest while busy.
+        assert!(frame(&mut ui, &mut t, &mut build));
+    }
+    let round = ui.rect_of(id).unwrap();
+    assert!((round.w - round.h).abs() < 1.0 && round.w < wide.w);
+    click(&mut ui, &mut t, id, &mut build);
+    drop(build);
+    assert_eq!(clicks, 0);
+}
+
+#[test]
+fn hold_button_fires_only_after_the_full_hold() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let mut fired = 0;
+    let mut build = |ui: &mut Ui| {
+        if ui.hold_button("delete", "Delete", 1.0, Variant::Outline, Size::Md) {
+            fired += 1;
+        }
+    };
+    settle(&mut ui, &mut t, &mut build);
+    let id = ui.id("delete");
+    ui.pointer_moved(ui.rect_of(id).unwrap().center());
+    frame(&mut ui, &mut t, &mut build);
+    // Let go after half a second: nothing happens.
+    ui.pointer_pressed();
+    for _ in 0..30 {
+        frame(&mut ui, &mut t, &mut build);
+    }
+    ui.pointer_released();
+    settle(&mut ui, &mut t, &mut build);
+    // Hold for longer than a second: it fires, once.
+    ui.pointer_pressed();
+    for _ in 0..90 {
+        frame(&mut ui, &mut t, &mut build);
+    }
+    ui.pointer_released();
+    settle(&mut ui, &mut t, &mut build);
+    drop(build);
+    assert_eq!(fired, 1);
+}
