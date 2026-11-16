@@ -636,3 +636,79 @@ fn hold_button_fires_only_after_the_full_hold() {
     drop(build);
     assert_eq!(fired, 1);
 }
+
+// ----- window chrome --------------------------------------------------------
+
+use morfo::{ResizeEdge, TitleBar};
+
+/// One frame with a press at `p`, returning what the bar reported.
+fn press_on_bar(ui: &mut Ui, t: &mut f64, p: Vec2, maximized: bool) -> TitleBar {
+    let mut out = TitleBar::default();
+    ui.pointer_moved(p);
+    frame(ui, t, |ui| {
+        ui.title_bar("bar", "App", maximized, |_| {});
+    });
+    ui.pointer_pressed();
+    frame(ui, t, |ui| {
+        out = ui.title_bar("bar", "App", maximized, |_| {});
+    });
+    ui.pointer_released();
+    frame(ui, t, |ui| {
+        let r = ui.title_bar("bar", "App", maximized, |_| {});
+        out.close |= r.close;
+        out.minimize |= r.minimize;
+        out.toggle_maximize |= r.toggle_maximize;
+    });
+    out
+}
+
+#[test]
+fn title_bar_reports_window_actions() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.title_bar("bar", "App", false, |ui| {
+            ui.button("extra", "Extra");
+        });
+        ui.button("content", "Content");
+    };
+    settle(&mut ui, &mut t, build);
+    // The layout starts below the bar.
+    let h = ui.top_inset();
+    assert!(h > 30.0);
+    assert!(ui.rect_of(ui.id("content")).unwrap().y > h);
+    // Content of the bar sits inside it.
+    let extra = ui.rect_of(ui.id("bar").child("extra")).unwrap();
+    assert!(extra.y >= 0.0 && extra.bottom() <= h);
+
+    let close = ui.rect_of(ui.id("bar").child("close")).unwrap().center();
+    assert!(press_on_bar(&mut ui, &mut t, close, false).close);
+    let min = ui.rect_of(ui.id("bar").child("minimize")).unwrap().center();
+    assert!(press_on_bar(&mut ui, &mut t, min, false).minimize);
+    let max = ui.rect_of(ui.id("bar").child("maximize")).unwrap().center();
+    assert!(press_on_bar(&mut ui, &mut t, max, false).toggle_maximize);
+
+    // An empty part of the bar moves the window; a quick second press
+    // maximizes it instead.
+    let empty = Vec2::new(400.0, h * 0.5);
+    let first = press_on_bar(&mut ui, &mut t, empty, false);
+    assert!(first.drag && !first.toggle_maximize);
+    let second = press_on_bar(&mut ui, &mut t, empty, false);
+    assert!(second.toggle_maximize && !second.drag);
+    t += 1.0;
+    assert!(press_on_bar(&mut ui, &mut t, empty, false).drag);
+}
+
+#[test]
+fn window_borders_resize_unless_maximized() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    settle(&mut ui, &mut t, |ui| {
+        ui.title_bar("bar", "App", false, |_| {});
+    });
+    let r = press_on_bar(&mut ui, &mut t, Vec2::new(VIEW.x - 2.0, 300.0), false);
+    assert_eq!(r.resize, Some(ResizeEdge::East));
+    let r = press_on_bar(&mut ui, &mut t, Vec2::new(VIEW.x - 3.0, VIEW.y - 3.0), false);
+    assert_eq!(r.resize, Some(ResizeEdge::SouthEast));
+    let r = press_on_bar(&mut ui, &mut t, Vec2::new(VIEW.x - 2.0, 300.0), true);
+    assert_eq!(r.resize, None);
+    assert_eq!(r.hover_edge, None);
+}

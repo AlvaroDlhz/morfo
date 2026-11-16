@@ -228,6 +228,7 @@ pub struct Ui {
     pub(crate) toasts: Vec<crate::overlay::Toast>,
     pub(crate) toast_seq: u64,
     pub(crate) morphs: IdMap<crate::morph::Morph>,
+    pub(crate) top_inset: f32,
     pub(crate) morph_buf: Vec<DrawCmd>,
 }
 
@@ -270,6 +271,7 @@ impl Ui {
             toasts: Vec::new(),
             toast_seq: 0,
             morphs: IdMap::default(),
+            top_inset: 0.0,
             morph_buf: Vec::new(),
         }
     }
@@ -389,6 +391,7 @@ impl Ui {
         self.focus_claimed = false;
         self.dismiss = false;
         self.wake = f64::INFINITY;
+        self.top_inset = 0.0;
         self.layouts.clear();
         self.scope = Id::ROOT;
         self.alpha = 1.0;

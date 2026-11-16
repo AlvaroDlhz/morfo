@@ -77,12 +77,13 @@ Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
 | --- | --- |
 | Texto | `label`, `muted`, `title`, `heading`, `text` (tamaño libre), `code` |
 | Botones | `button`, `button_with`, `icon_button` (solo icono), `button_icon` (icono y texto), `toggle_button` (se queda pulsado), `loading_button` (se encoge en un indicador mientras carga), `hold_button` (mantener para confirmar). Todos con las variantes `Solid`, `Soft`, `Outline`, `Ghost` y los tamaños `Sm`, `Md`, `Lg` |
-| Iconos | `Icon`: 16 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir…) |
+| Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
 | Controles | `toggle`, `slider`, `progress`, `segmented` |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
 | Cajas | `row`, `column`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `presence` |
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `close` |
 | Navegación | `side_nav` (índice oculto en el borde izquierdo que se despliega al acercar el cursor) |
+| Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
 | Entrada | `text_field` (foco, cursor, Tab, Enter, Escape) |
 | Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions` |
 | Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
@@ -99,7 +100,8 @@ cargo run --release -p morfo-demo --bin docs
 
 La documentación es una app hecha con morfo. Tiene diez páginas (Inicio,
 Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
-Mutación), a las que se llega con un índice lateral: un riel en el borde
+Mutación), con su propia barra de ventana en lugar de la del sistema, y a
+las que se llega con un índice lateral: un riel en el borde
 izquierdo que se despliega al acercar el cursor. Cada página explica un
 grupo de componentes, lo muestra funcionando y enseña el código que lo
 produce. Su fuente, `demo/src/lib.rs`, sirve también de ejemplo completo.
@@ -160,6 +162,10 @@ repintado completo.
 - Durante una mutación, los controles de la forma nueva ya responden en su
   posición final, aunque aún se estén dibujando a medio camino. Lo que esa
   forma dibuje en capas flotantes (tooltips, diálogos) no participa en el morph.
+- `title_bar` no mueve ni cierra la ventana por sí misma: devuelve lo que
+  pidió el usuario y el programa lo hace (en la demo, con winit). Arrastrar
+  y redimensionar dependen de que el gestor de ventanas lo permita; las
+  sombras y esquinas redondeadas de la ventana no se dibujan.
 - Solo hay backend por CPU; no hay backend GPU ni web todavía. Las
   transiciones a pantalla completa a 2× rondan los 11 ms: caben en 60 fps,
   pero con poco margen en máquinas lentas o pantallas mayores.

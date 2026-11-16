@@ -31,10 +31,12 @@ pub enum Icon {
     Play,
     Pause,
     Star,
+    Maximize,
+    Restore,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 16] = [
+    pub const ALL: [Icon; 18] = [
         Icon::Plus,
         Icon::Minus,
         Icon::Close,
@@ -51,6 +53,8 @@ impl Icon {
         Icon::Play,
         Icon::Pause,
         Icon::Star,
+        Icon::Maximize,
+        Icon::Restore,
     ];
 }
 
@@ -135,6 +139,11 @@ pub(crate) fn draw_icon(list: &mut DrawList, icon: Icon, c: Vec2, size: f32, col
                 })
                 .collect();
             poly(&pts, true);
+        }
+        Icon::Maximize => poly(&[(-0.7, -0.7), (0.7, -0.7), (0.7, 0.7), (-0.7, 0.7)], true),
+        Icon::Restore => {
+            poly(&[(-0.7, -0.35), (0.35, -0.35), (0.35, 0.7), (-0.7, 0.7)], true);
+            poly(&[(-0.35, -0.35), (-0.35, -0.7), (0.7, -0.7), (0.7, 0.35), (0.35, 0.35)], false);
         }
         _ => {}
     }

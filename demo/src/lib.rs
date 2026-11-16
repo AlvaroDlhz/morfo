@@ -3,7 +3,7 @@
 //! que lo produce. La comparten la ventana (`docs`) y el simulador sin
 //! ventana (`snapshot`).
 
-use morfo::{Color, Icon, Profile, Prominence, Size, Theme, Ui, Variant, Vec2};
+use morfo::{Color, Icon, Profile, Prominence, Size, Theme, TitleBar, Ui, Variant, Vec2};
 
 /// Tamaño lógico recomendado de la ventana.
 pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
@@ -34,9 +34,9 @@ const SHAPES: [(Vec2, f32, u32); 4] = [
 
 const VARIANT_NAMES: [&str; 4] = ["Solid", "Soft", "Outline", "Ghost"];
 
-const ICON_NAMES: [&str; 16] = [
+const ICON_NAMES: [&str; 18] = [
     "Plus", "Minus", "Close", "Check", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
-    "ChevronDown", "Menu", "Search", "Home", "Download", "Play", "Pause", "Star",
+    "ChevronDown", "Menu", "Search", "Home", "Download", "Play", "Pause", "Star", "Maximize", "Restore",
 ];
 
 /// One kind of button shown in its four variants, labelled.
@@ -88,6 +88,10 @@ pub struct State {
     pub btn_size: usize,
     pub follow: [bool; 4],
     pub busy_until: [f64; 4],
+    /// Whether the window is maximized (the host fills it in each frame).
+    pub maximized: bool,
+    /// What the title bar asked of the window this frame (the host does it).
+    pub chrome: TitleBar,
 }
 
 impl Default for State {
@@ -123,6 +127,8 @@ impl Default for State {
             btn_size: 1,
             follow: [false, true, false, true],
             busy_until: [0.0; 4],
+            maximized: false,
+            chrome: TitleBar::default(),
         }
     }
 }
@@ -138,14 +144,19 @@ fn forget(ui: &mut Ui, s: &mut State) {
 
 /// Una página: aparece y desaparece con `reveal` y su contenido hace scroll.
 fn page(ui: &mut Ui, key: &str, scroll: &str, open: bool, f: impl FnOnce(&mut Ui)) {
-    let height = (ui.viewport().y - 150.0).max(120.0);
+    let height = (ui.viewport().y - ui.top_inset() - 100.0).max(120.0);
     ui.reveal(key, open, |ui| ui.scroll(scroll, height, f));
 }
 
 pub fn build(ui: &mut Ui, s: &mut State) {
+    // La barra de la aplicación sustituye a la del gestor de ventanas: mueve,
+    // minimiza, maximiza y cierra la ventana (eso lo hace el programa).
+    let page_name = PAGES[s.tab];
+    s.chrome = ui.title_bar("barra", "morfo · documentación", s.maximized, |ui| {
+        ui.muted(page_name);
+    });
     // El índice vive en el borde izquierdo: se despliega al acercar el cursor.
     ui.side_nav("indice", "morfo", &PAGES, &mut s.tab);
-    ui.heading("morfo");
     ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para abrir el índice.");
     ui.space(4.0);
 
@@ -370,9 +381,29 @@ pub fn build(ui: &mut Ui, s: &mut State) {
             "    });",
             "});",
             "",
+            "// Barra de la aplicación (ver abajo): primera llamada del frame",
+            "let barra = ui.title_bar(\"barra\", \"Mi app\", maximizada, |ui| { ui.muted(\"Inicio\"); });",
+            "",
             "// Contenido propio que debe animar también su salida",
             "let p = ui.presence(\"aviso\", visible);   // 0..1; sigue declarándolo mientras p > 0",
         ]);
+        ui.card("card-barra", |ui| {
+            ui.label("Barra de la aplicación");
+            ui.muted("La de arriba sustituye a la del gestor de ventanas. Arrástrala para mover la ventana,");
+            ui.muted("haz doble clic para maximizar y usa los bordes de la ventana para cambiar su tamaño.");
+            ui.code(&[
+                "// Crea la ventana sin decoraciones y llama a title_bar lo primero de cada frame.",
+                "let barra = ui.title_bar(\"barra\", \"Mi app\", ventana.is_maximized(), |ui| {",
+                "    ui.icon_button(\"buscar\", Icon::Search, Variant::Ghost, Size::Sm);",
+                "});",
+                "// La librería no toca la ventana: dice qué se pidió y el programa lo hace.",
+                "if barra.drag { ventana.drag_window(); }",
+                "if let Some(borde) = barra.resize { ventana.drag_resize_window(direccion(borde)); }",
+                "if barra.minimize { ventana.set_minimized(true); }",
+                "if barra.toggle_maximize { ventana.set_maximized(!ventana.is_maximized()); }",
+                "if barra.close { salir(); }",
+            ]);
+        });
     });
 
     page(ui, "page-formas", "scroll-formas", s.tab == 5, |ui| {

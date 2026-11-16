@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use morfo::{Key, Profile, Theme, Ui, Vec2};
+use morfo::{Key, Profile, ResizeEdge, Theme, Ui, Vec2};
 use morfo_demo::{build, State, WINDOW};
 use morfo_skia::{tiny_skia::Pixmap, Renderer};
 use winit::application::ApplicationHandler;
@@ -17,7 +17,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
 struct Gfx {
     window: Rc<Window>,
@@ -32,6 +32,33 @@ struct App {
     gfx: Option<Gfx>,
     /// When the UI asked to be woken with no input (tooltips, toasts, caret).
     wake: Option<Instant>,
+    /// Border under the pointer last frame, to change the cursor only when needed.
+    edge: Option<ResizeEdge>,
+    /// The title bar's close button was pressed.
+    quit: bool,
+}
+
+fn direction(e: ResizeEdge) -> ResizeDirection {
+    match e {
+        ResizeEdge::North => ResizeDirection::North,
+        ResizeEdge::South => ResizeDirection::South,
+        ResizeEdge::East => ResizeDirection::East,
+        ResizeEdge::West => ResizeDirection::West,
+        ResizeEdge::NorthEast => ResizeDirection::NorthEast,
+        ResizeEdge::NorthWest => ResizeDirection::NorthWest,
+        ResizeEdge::SouthEast => ResizeDirection::SouthEast,
+        ResizeEdge::SouthWest => ResizeDirection::SouthWest,
+    }
+}
+
+fn cursor(e: Option<ResizeEdge>) -> CursorIcon {
+    match e {
+        None => CursorIcon::Default,
+        Some(ResizeEdge::North | ResizeEdge::South) => CursorIcon::NsResize,
+        Some(ResizeEdge::East | ResizeEdge::West) => CursorIcon::EwResize,
+        Some(ResizeEdge::NorthEast | ResizeEdge::SouthWest) => CursorIcon::NeswResize,
+        Some(ResizeEdge::NorthWest | ResizeEdge::SouthEast) => CursorIcon::NwseResize,
+    }
 }
 
 fn profile_path() -> PathBuf {
@@ -58,9 +85,36 @@ impl App {
             gfx.surface.resize(w, h).unwrap();
         }
 
+        self.state.maximized = gfx.window.is_maximized();
         self.ui.begin(now(), Vec2::new(size.width as f32 / scale, size.height as f32 / scale));
         build(&mut self.ui, &mut self.state);
         let frame = self.ui.end();
+
+        // Carry out what the app's own title bar asked of the window.
+        let bar = self.state.chrome;
+        if bar.hover_edge != self.edge {
+            gfx.window.set_cursor(cursor(bar.hover_edge));
+            self.edge = bar.hover_edge;
+        }
+        if bar.drag || bar.resize.is_some() {
+            let _ = match bar.resize {
+                Some(edge) => gfx.window.drag_resize_window(direction(edge)),
+                None => gfx.window.drag_window(),
+            };
+            // The window manager takes the pointer from here: the release
+            // may never reach us.
+            self.ui.pointer_released();
+            self.ui.pointer_left();
+        }
+        if bar.minimize {
+            gfx.window.set_minimized(true);
+        }
+        if bar.toggle_maximize {
+            gfx.window.set_maximized(!gfx.window.is_maximized());
+        }
+        if bar.close {
+            self.quit = true;
+        }
         let damage = self.renderer.render(self.ui.draw_list(), &mut gfx.pixmap, scale, self.ui.background());
 
         // Copy to the window only the rows that were repainted, when the
@@ -84,12 +138,28 @@ impl App {
     }
 }
 
+impl App {
+    fn save_profile(&self) {
+        let path = profile_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, self.ui.profile().encode()) {
+            eprintln!("could not save profile to {}: {e}", path.display());
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("morfo · documentación").with_inner_size(LogicalSize::new(WINDOW.x, WINDOW.y));
+        // No window-manager decorations: the app draws its own title bar.
+        let attrs = Window::default_attributes()
+            .with_title("morfo · documentación")
+            .with_inner_size(LogicalSize::new(WINDOW.x, WINDOW.y))
+            .with_decorations(false);
         let window = Rc::new(el.create_window(attrs).unwrap());
         let context = softbuffer::Context::new(window.clone()).unwrap();
         let mut surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
@@ -114,16 +184,16 @@ impl ApplicationHandler for App {
         let window = gfx.window.clone();
         match event {
             WindowEvent::CloseRequested => {
-                let path = profile_path();
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                if let Err(e) = std::fs::write(&path, self.ui.profile().encode()) {
-                    eprintln!("could not save profile to {}: {e}", path.display());
-                }
+                self.save_profile();
                 el.exit();
             }
-            WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::RedrawRequested => {
+                self.redraw();
+                if self.quit {
+                    self.save_profile();
+                    el.exit();
+                }
+            }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => window.request_redraw(),
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.to_logical::<f32>(window.scale_factor());
@@ -185,6 +255,6 @@ fn main() {
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App { ui, state: State::default(), renderer, gfx: None, wake: None };
+    let mut app = App { ui, state: State::default(), renderer, gfx: None, wake: None, edge: None, quit: false };
     event_loop.run_app(&mut app).unwrap();
 }

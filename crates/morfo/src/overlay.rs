@@ -295,17 +295,18 @@ impl Ui {
         let row_h = (theme.control * 0.95).round();
         let widest = items.iter().map(|l| self.text.width(l, font)).fold(self.text.width(title, title_font), f32::max);
         let width = (widest + theme.pad * 2.0 + 16.0).max(220.0).min((vp.x - 32.0).max(60.0));
-        let full = Rect::new(8.0, 8.0, width, (vp.y - 16.0).max(0.0));
+        let top = self.top_inset;
+        let full = Rect::new(8.0, top + 8.0, width, (vp.y - top - 16.0).max(0.0));
         let dot_gap = 12.0;
         let rail_h = items.len() as f32 * dot_gap + 16.0;
-        let rail = Rect::new(5.0, ((vp.y - rail_h) * 0.5).max(8.0), 9.0, rail_h);
+        let rail = Rect::new(5.0, (top + (vp.y - top - rail_h) * 0.5).max(top + 8.0), 9.0, rail_h);
 
         // Open while the pointer is at the edge or on the open panel; linger
         // briefly after it leaves; after a choice, stay shut until it leaves.
         let (now, pointer) = (self.now, self.input.pointer);
         let n = self.nodes.entry(id).or_insert_with(crate::ui::Node::new);
         n.touch(self.frame);
-        let at_edge = pointer.is_some_and(|p| p.x < EDGE || rail.inset(-6.0).contains(p));
+        let at_edge = pointer.is_some_and(|p| (p.x < EDGE && p.y > top) || rail.inset(-6.0).contains(p));
         let on_panel = n.open && pointer.is_some_and(|p| full.inset(-12.0).contains(p));
         if n.latch && !at_edge && !on_panel {
             n.latch = false;
@@ -341,11 +342,11 @@ impl Ui {
         self.clip = Some(panel);
         self.draw.add_text(Vec2::new(full.x + theme.pad, full.y + theme.pad * 0.8), title_font, pal[TEXT].fade(ink), title);
 
-        let top = full.y + theme.pad * 0.8 + title_font * LINE_HEIGHT + theme.gap;
+        let rows_top = full.y + theme.pad * 0.8 + title_font * LINE_HEIGHT + theme.gap;
         let (mut changed, mut chosen) = (false, false);
         let snappy = self.steps[Snappy as usize];
         for (i, label) in items.iter().enumerate() {
-            let row = Rect::new(full.x + 8.0, top + i as f32 * (row_h + 2.0), width - 16.0, row_h);
+            let row = Rect::new(full.x + 8.0, rows_top + i as f32 * (row_h + 2.0), width - 16.0, row_h);
             let dot = Rect::new(rail.center().x - 2.5, rail.y + 8.0 + i as f32 * dot_gap + (dot_gap - 5.0) * 0.5, 5.0, 5.0);
             let r = lerp_rect(dot, row, p);
             let row_id = id.with(i as u64);
