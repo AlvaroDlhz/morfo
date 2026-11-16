@@ -16,6 +16,15 @@ pub(crate) struct Line {
     pub end: usize,
 }
 
+/// A paragraph broken into lines, kept from frame to frame: it is only
+/// broken again when its text, its width or its font size change.
+#[derive(Default)]
+pub(crate) struct Wrapped {
+    /// What `lines` was computed for (0: nothing yet).
+    key: u64,
+    lines: Vec<Line>,
+}
+
 /// Breaks `text` into lines no wider than `width`: at newlines, between
 /// words, and inside words too long to fit on a line of their own.
 pub(crate) fn wrap(text: &str, width: f32, font: f32, m: &dyn TextMeasure, out: &mut Vec<Line>) {
@@ -84,16 +93,21 @@ impl Ui {
     fn paragraph_styled(&mut self, text: &str, color: usize, font: f32) {
         let id = self.auto_id();
         let width = self.available_width();
-        let mut lines = Vec::new();
-        wrap(text, width, font, &*self.text, &mut lines);
+        let key = (crate::ui::hash_str(text) ^ ((width.to_bits() as u64) << 32 | font.to_bits() as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)) | 1;
+        let mut wrapped = self.wraps.remove(&id).unwrap_or_default();
+        if wrapped.key != key {
+            wrap(text, width, font, &*self.text, &mut wrapped.lines);
+            wrapped.key = key;
+        }
         let lh = font * LINE_HEIGHT;
-        let target = self.alloc(Vec2::new(width, lines.len() as f32 * lh));
+        let target = self.alloc(Vec2::new(width, wrapped.lines.len() as f32 * lh));
         let (r, life) = self.enter(id, target, Smooth);
         self.describe(id, Role::Label, text, r, None, None);
         let ink = self.pal[color].fade(self.alpha * life);
-        for (i, l) in lines.iter().enumerate() {
+        for (i, l) in wrapped.lines.iter().enumerate() {
             self.draw.add_text(Vec2::new(r.x, r.y + i as f32 * lh), font, ink, &text[l.start..l.end]);
         }
+        self.wraps.insert(id, wrapped);
     }
 
     /// Multi-line text field: wraps as you type, Enter starts a new line,

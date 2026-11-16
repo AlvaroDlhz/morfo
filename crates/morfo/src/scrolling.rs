@@ -98,12 +98,20 @@ impl Ui {
         let view = self.view_rect();
         let (now, frame, instant) = (self.now, self.frame, self.instant);
         let k = self.steps[Smooth as usize];
-        let batch = self.reveal_batch;
+        let (batch, waking) = (self.reveal_batch, self.waking);
         let n = self.nodes.entry(id).or_insert_with(Node::new);
         if n.touch(frame) {
-            n.index = 0;
-            n.latch = false;
-            n.aux.snap(0.0);
+            if waking {
+                // Back from being left unbuilt: it had appeared already.
+                n.index = 3;
+                n.latch = true;
+                n.stamp = 0.0;
+                n.aux.snap(1.0);
+            } else {
+                n.index = 0;
+                n.latch = false;
+                n.aux.snap(0.0);
+            }
         }
         n.index = n.index.saturating_add(1);
         // The layout needs a couple of frames to know where things are.
@@ -192,7 +200,8 @@ impl Ui {
         let k = SpringStep::new(COUNT, self.dt);
         let n = self.nodes.get_mut(&id).unwrap();
         if n.fresh() {
-            n.e1.snap(0.0);
+            // New: it counts from zero. Back from being unbuilt: it is there.
+            n.e1.snap(if self.waking { value } else { 0.0 });
         }
         let goal = if p > 0.0 { value } else { 0.0 };
         let mut anim = n.e1.drive(goal, false, &k);

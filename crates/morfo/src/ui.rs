@@ -23,6 +23,69 @@ pub trait TextMeasure {
     fn width(&self, text: &str, size: f32) -> f32;
 }
 
+/// Hash of a string, eight bytes at a time: cheap enough to run on every
+/// text of every frame.
+pub(crate) fn hash_str(s: &str) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let bytes = s.as_bytes();
+    let mut h = (bytes.len() as u64 ^ 0x51_7c_c1_b7_27_22_0a_95).wrapping_mul(K);
+    let (chunks, rest) = bytes.as_chunks::<8>();
+    for c in chunks {
+        h = (h ^ u64::from_le_bytes(*c)).wrapping_mul(K);
+        h ^= h >> 32;
+    }
+    let mut v = 0u64;
+    for (i, &b) in rest.iter().enumerate() {
+        v |= (b as u64) << (8 * i);
+    }
+    h = (h ^ v).wrapping_mul(K);
+    h ^ (h >> 29)
+}
+
+/// The backend's text metrics behind a cache: an interface measures the
+/// same few hundred strings frame after frame, and measuring can be costly
+/// (font tables, or a call into the browser).
+pub(crate) struct TextCache {
+    inner: Box<dyn TextMeasure>,
+    /// `false` for metrics cheaper than a cache lookup.
+    cached: bool,
+    widths: std::cell::RefCell<IdMap<f32>>,
+}
+
+impl TextCache {
+    fn new(inner: Box<dyn TextMeasure>, cached: bool) -> TextCache {
+        TextCache { inner, cached, widths: Default::default() }
+    }
+
+    /// Width of `text` on one line at font size `size`.
+    pub(crate) fn width(&self, text: &str, size: f32) -> f32 {
+        if !self.cached || text.is_empty() {
+            return self.inner.width(text, size);
+        }
+        let key = Id(hash_str(text) ^ (size.to_bits() as u64).wrapping_mul(0xff51_afd7_ed55_8ccd));
+        if let Some(&w) = self.widths.borrow().get(&key) {
+            return w;
+        }
+        let w = self.inner.width(text, size);
+        let mut widths = self.widths.borrow_mut();
+        // Text that keeps changing (a clock, a counter) must not pile up.
+        if widths.len() > 16_384 {
+            widths.clear();
+        }
+        widths.insert(key, w);
+        w
+    }
+}
+
+/// The metrics themselves, uncached: for callers that measure many
+/// throwaway pieces (every prefix of a line being wrapped).
+impl std::ops::Deref for TextCache {
+    type Target = dyn TextMeasure;
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
+
 /// Font-less estimate, good enough for tests and headless use.
 pub struct ApproxText;
 
@@ -225,7 +288,9 @@ pub struct Ui {
     pub(crate) input: Input,
     pub(crate) active: Option<Id>,
     pub(crate) profile: Profile,
-    pub(crate) text: Box<dyn TextMeasure>,
+    pub(crate) text: TextCache,
+    /// How each paragraph was last broken into lines, and for what.
+    pub(crate) wraps: IdMap<crate::text::Wrapped>,
     pub(crate) now: f64,
     pub(crate) frame: u64,
     pub(crate) animating: bool,
@@ -233,7 +298,7 @@ pub struct Ui {
     /// Areas of upper layers that swallow the pointer: this frame's, and last
     /// frame's (the ones hit-testing can already rely on).
     pub(crate) blockers: Vec<(u8, Rect)>,
-    blockers_prev: Vec<(u8, Rect)>,
+    pub(crate) blockers_prev: Vec<(u8, Rect)>,
     /// The menu currently open, if any.
     pub(crate) open: Option<Id>,
     pub(crate) menu_more: bool,
@@ -321,6 +386,15 @@ pub struct Ui {
     /// became (for [`Ui::find`]).
     declared: Vec<(Id, Id)>,
     declared_prev: Vec<(Id, Id)>,
+    /// Cards far outside the view are left unbuilt ([`Ui::set_lazy`]).
+    pub(crate) lazy: bool,
+    pub(crate) dormant: IdMap<crate::lazy::Dormant>,
+    /// The container being built holds the focus or a press, or declares
+    /// something that lives outside it: it cannot be left unbuilt.
+    pub(crate) busy: bool,
+    /// The container being built was unbuilt until now: what it holds is
+    /// not new, it shows as it would have been.
+    pub(crate) waking: bool,
     /// Inside [`Ui::enabled`]`(false, …)`: nothing responds.
     pub(crate) disabled: bool,
     /// Variant of the buttons that do not name one ([`Ui::with_variant`]).
@@ -355,7 +429,8 @@ impl Ui {
             input: Input::default(),
             active: None,
             profile: Profile::new(),
-            text: Box::new(ApproxText),
+            text: TextCache::new(Box::new(ApproxText), false),
+            wraps: IdMap::default(),
             now: 0.0,
             frame: 1,
             animating: false,
@@ -417,6 +492,10 @@ impl Ui {
             dt: 0.0,
             declared: Vec::new(),
             declared_prev: Vec::new(),
+            lazy: true,
+            dormant: IdMap::default(),
+            busy: false,
+            waking: false,
             disabled: false,
             style_variant: None,
             skip_entrance: false,
@@ -429,7 +508,8 @@ impl Ui {
 
     /// Installs the backend's text metrics.
     pub fn set_text_measure(&mut self, text: Box<dyn TextMeasure>) {
-        self.text = text;
+        self.text = TextCache::new(text, true);
+        self.wraps.clear();
     }
 
     /// Switches theme. Colors morph; nothing jumps.
@@ -611,6 +691,8 @@ impl Ui {
         self.shift = 0.0;
         self.ground = BG;
         self.disabled = false;
+        self.busy = false;
+        self.waking = false;
         self.style_variant = None;
         std::mem::swap(&mut self.declared, &mut self.declared_prev);
         self.declared.clear();
@@ -683,6 +765,7 @@ impl Ui {
             let nodes = &self.nodes;
             self.morphs.retain(|id, _| nodes.contains_key(id));
             self.swaps.retain(|id, _| nodes.contains_key(id));
+            self.wraps.retain(|id, _| nodes.contains_key(id));
         }
         let wake_in = self.wake.is_finite().then(|| (self.wake - self.now).max(0.0) as f32);
         Frame { animating: self.animating || again, wake_in }
@@ -809,6 +892,9 @@ impl Ui {
             return Hit { hovered: false, held: false, clicked: false, released: false };
         }
         self.focusables.push(id);
+        if self.focus == Some(id) {
+            self.busy = true;
+        }
         let mut hit = self.hit_inert(id, rect);
         if self.input.pressed && self.active == Some(id) && self.focus != Some(id) {
             self.focus_before = self.focus;
@@ -840,6 +926,7 @@ impl Ui {
             self.active = Some(id);
         }
         let mine = self.active == Some(id);
+        self.busy |= mine;
         Hit {
             hovered: over && (self.active.is_none() || mine),
             held: mine && self.input.down,

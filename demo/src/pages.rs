@@ -21,7 +21,7 @@ const DESCRIPCIONES: [&str; 18] = [
     "Campos de texto, áreas multilínea, desplegables y buscadores.",
     "Interfaces que se reordenan y se adaptan al uso de cada persona.",
     "Un componente que se transforma en otro sin cortes.",
-    "Tablas ordenables y listas que se reordenan arrastrando.",
+    "Tablas ordenables, listas que se reordenan arrastrando y listas de miles de filas.",
     "Barras, líneas, tendencias, mapas de calor y medidores que viajan a sus datos.",
     "Pestañas, migas de pan, árboles, paginadores y un panel lateral.",
     "Fechas, colores, etiquetas, varias opciones a la vez y atajos de teclado.",
@@ -999,7 +999,27 @@ pub fn datos(ui: &mut Ui, s: &mut State) {
         "}",
         "ui.reorderable(\"tareas\", &mut tareas, |t| t.as_str());   // el texto es la identidad",
     ]);
+
+    ui.space(8.0);
+    ui.title("Listas muy largas");
+    ui.card("card-registro", |ui| {
+        ui.paragraph_muted(
+            "Veinte mil filas, y solo se construyen las que se ven: cuesta lo mismo que una lista de diez. Las filas que entran al hacer scroll aparecen tal cual, sin animación de entrada.",
+        );
+        ui.virtual_list("registro", 20_000, 34.0, 240.0, |ui, i| {
+            ui.muted(&format!("#{:05}", i + 1));
+            ui.label(&format!("{} en {}", EVENTOS[i % EVENTOS.len()], CITIES[(i * 7) % CITIES.len()]));
+            ui.fill();
+            ui.muted(&format!("{:02}:{:02}", (i / 60) % 24, i % 60));
+        });
+    });
+    ui.code(&[
+        "// 20 000 filas de 34 px en una ventana de 240 px",
+        "ui.virtual_list(\"registro\", 20_000, 34.0, 240.0, |ui, i| { ui.label(&fila(i)); });",
+    ]);
 }
+
+const EVENTOS: [&str; 5] = ["Pedido enviado", "Pago recibido", "Alta de cliente", "Devolución", "Consulta"];
 
 // ----- Gráficos ---------------------------------------------------------------
 

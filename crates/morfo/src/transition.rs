@@ -248,6 +248,7 @@ impl Ui {
     /// when it moves far in one go. `key` is global: it does not depend on
     /// the scope it is declared in.
     pub fn hero(&mut self, key: &str, f: impl FnOnce(&mut Ui)) {
+        self.busy = true;
         let id = Id::new("morfo-hero").child(key);
         let prev = self.sizes.get(&id).copied().unwrap_or(Vec2::ZERO);
         let at = self.peek(prev);

@@ -2,12 +2,15 @@
 //! pixmap. No GPU, no windowing assumptions — hand the pixels to anything
 //! (softbuffer, a canvas, a PNG, a framebuffer).
 //!
-//! Built to do as little as possible: only the rows that changed since the
-//! previous frame are repainted, in parallel strips when there are many,
-//! and glyph bitmaps are cached between frames.
+//! Built to do as little as possible: only the rectangle around what
+//! changed since the previous frame is repainted, in parallel strips when
+//! it is large, and glyph bitmaps and text metrics are cached between
+//! frames.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI};
+use std::hash::{BuildHasherDefault, Hasher};
 
 use ab_glyph::{point, Font, FontArc, GlyphId, PxScale, ScaleFont};
 use morfo::ui::LINE_HEIGHT;
@@ -17,26 +20,67 @@ use tiny_skia::{Pixmap, PixmapMut};
 pub use ab_glyph::InvalidFont;
 pub use tiny_skia;
 
-/// Text metrics matching what [`Renderer`] draws. Give it to
-/// [`morfo::Ui::set_text_measure`].
-pub struct FontMeasure(FontArc);
-
 fn px_scale(font: &FontArc, size: f32) -> PxScale {
     // ab_glyph scales by ascent-to-descent height; `size` is the em size.
     PxScale::from(size * font.height_unscaled() / font.units_per_em().unwrap_or(1000.0))
 }
 
+/// Text metrics matching what [`Renderer`] draws. Give it to
+/// [`morfo::Ui::set_text_measure`].
+///
+/// It remembers the glyph and advance of every character it has seen and
+/// the kerning of every pair, so measuring a string is a few table lookups
+/// per character instead of a walk through the font's tables.
+pub struct FontMeasure {
+    font: FontArc,
+    /// Glyph and unscaled advance of each character.
+    glyphs: RefCell<HashMap<char, (GlyphId, f32), Mixed>>,
+    /// Unscaled kerning of each pair of glyphs (`first << 16 | second`).
+    kerns: RefCell<HashMap<u32, f32, Mixed>>,
+}
+
+/// Hasher for small integer keys: one multiplication.
+#[derive(Default, Clone, Copy)]
+struct Mix(u64);
+type Mixed = BuildHasherDefault<Mix>;
+
+impl Hasher for Mix {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u32(b as u32);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = (self.0 ^ v as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+impl FontMeasure {
+    fn new(font: FontArc) -> FontMeasure {
+        FontMeasure { font, glyphs: RefCell::default(), kerns: RefCell::default() }
+    }
+}
+
 impl TextMeasure for FontMeasure {
     fn width(&self, text: &str, size: f32) -> f32 {
-        let f = self.0.as_scaled(px_scale(&self.0, size));
+        // Scaled metrics are the unscaled ones times this factor, which is
+        // exactly what the renderer's own layout computes.
+        let h = self.font.as_scaled(px_scale(&self.font, size)).h_scale_factor();
+        let (mut glyphs, mut kerns) = (self.glyphs.borrow_mut(), self.kerns.borrow_mut());
         let mut w = 0.0;
         let mut prev: Option<GlyphId> = None;
         for ch in text.chars() {
-            let g = f.glyph_id(ch);
+            let (g, advance) = *glyphs.entry(ch).or_insert_with(|| {
+                let g = self.font.glyph_id(ch);
+                (g, self.font.h_advance_unscaled(g))
+            });
             if let Some(p) = prev {
-                w += f.kern(p, g);
+                w += h * *kerns.entry((p.0 as u32) << 16 | g.0 as u32).or_insert_with(|| self.font.kern_unscaled(p, g));
             }
-            w += f.h_advance(g);
+            w += h * advance;
             prev = Some(g);
         }
         w
@@ -108,31 +152,32 @@ impl Renderer {
     }
 
     pub fn measure(&self) -> FontMeasure {
-        FontMeasure(self.font.clone())
+        FontMeasure::new(self.font.clone())
     }
 
     /// Paints `list` over `background`. `scale` is the device pixel ratio.
     ///
     /// The pixmap is expected to still hold the previous frame: only the
-    /// rows whose content changed are repainted, split between threads when
-    /// there are enough of them. Returns the repainted rows `(first, end)`,
-    /// or `None` when the frame is identical to the last one and nothing was
+    /// rectangle around what changed is repainted, split between threads
+    /// when it is large enough. Returns the rows it spans `(first, end)`, or
+    /// `None` when the frame is identical to the last one and nothing was
     /// touched.
     ///
-    /// Clips are applied exactly to text, and to shapes as a band of rows
-    /// (which is what vertical reveals and scrolling need) — that keeps
-    /// clipping free: no mask is ever allocated or sampled.
+    /// Clips are applied as rectangles (their corner radius is ignored):
+    /// rows and columns outside them are simply not visited, so clipping
+    /// is free — no mask is ever allocated or sampled.
     pub fn render(&mut self, list: &DrawList, pixmap: &mut Pixmap, scale: f32, background: Color) -> Option<(u32, u32)> {
         let (width, height) = (pixmap.width(), pixmap.height());
         let target: Target = (width, height, scale.to_bits(), background.to_rgba8());
-        let rows = if self.prev_target == Some(target) {
-            self.damage(list).map(|(y0, y1)| {
-                let first = ((y0 * scale).floor() - 1.0).max(0.0) as u32;
-                let end = ((y1 * scale).ceil() + 1.0).max(0.0) as u32;
-                (first.min(height), end.min(height))
+        // What changed, as rows and columns of the pixmap.
+        let area = if self.prev_target == Some(target) {
+            self.damage(list).map(|[x0, y0, x1, y1]| {
+                let lo = |v: f32, max: u32| (((v * scale).floor() - 1.0).max(0.0) as u32).min(max);
+                let hi = |v: f32, max: u32| (((v * scale).ceil() + 1.0).max(0.0) as u32).min(max);
+                ((lo(y0, height), hi(y1, height)), (lo(x0, width) as i32, hi(x1, width) as i32))
             })
         } else {
-            Some((0, height))
+            Some(((0, height), (0, width as i32)))
         };
         self.prev.clear();
         self.prev.extend_from_slice(list.commands());
@@ -141,7 +186,7 @@ impl Renderer {
         self.prev_points.clear();
         self.prev_points.extend_from_slice(list.point_arena());
         self.prev_target = Some(target);
-        let (first, end) = rows.filter(|(a, b)| b > a)?;
+        let ((first, end), cols) = area.filter(|((a, b), (c, d))| b > a && d > c)?;
 
         if self.glyphs.len() > 4096 {
             self.glyphs.clear();
@@ -151,10 +196,10 @@ impl Renderer {
         let stride = width as usize * 4;
         let total = (end - first) as usize;
         let data = &mut pixmap.data_mut()[first as usize * stride..end as usize * stride];
-        let strips = if total * (width as usize) < 120_000 { 1 } else { self.threads.min(total / 32).max(1) };
+        let strips = if total * ((cols.1 - cols.0) as usize) < 120_000 { 1 } else { self.threads.min(total / 32).max(1) };
         let this = &*self;
         if strips == 1 {
-            this.paint_rows(list, data, width, first, end, scale, background);
+            this.paint_rows(list, data, width, cols, first, end, scale, background);
         } else {
             std::thread::scope(|scope| {
                 let mut rest = data;
@@ -166,9 +211,9 @@ impl Renderer {
                     let (y0, y1) = (y, y + h);
                     y = y1;
                     if i + 1 == strips {
-                        this.paint_rows(list, strip, width, y0, y1, scale, background);
+                        this.paint_rows(list, strip, width, cols, y0, y1, scale, background);
                     } else {
-                        scope.spawn(move || this.paint_rows(list, strip, width, y0, y1, scale, background));
+                        scope.spawn(move || this.paint_rows(list, strip, width, cols, y0, y1, scale, background));
                     }
                 }
             });
@@ -176,9 +221,9 @@ impl Renderer {
         Some((first, end))
     }
 
-    /// Vertical extent (logical pixels) of everything that differs from the
-    /// previous frame.
-    fn damage(&self, list: &DrawList) -> Option<(f32, f32)> {
+    /// The rectangle (logical pixels, `[x0, y0, x1, y1]`) around everything
+    /// that differs from the previous frame.
+    fn damage(&self, list: &DrawList) -> Option<[f32; 4]> {
         let (old, new) = (&self.prev[..], list.commands());
         let same = |a: &DrawCmd, b: &DrawCmd| match (*a, *b) {
             (
@@ -197,17 +242,18 @@ impl Renderer {
             _ => a == b,
         };
         let (old_pts, new_pts) = (&self.prev_points[..], list.point_arena());
-        let mut span: Option<(f32, f32)> = None;
-        let mut add = |cmd: &DrawCmd, pts: &[Vec2]| {
-            if let Some((a, b)) = extent(cmd, pts) {
-                span = Some(span.map_or((a, b), |(x, y)| (x.min(a), y.max(b))));
+        let (old_text, new_text) = (&self.prev_text[..], list.text_arena());
+        let mut span: Option<[f32; 4]> = None;
+        let mut add = |cmd: &DrawCmd, pts: &[Vec2], text: &str| {
+            if let (Some((y0, y1)), Some((x0, x1))) = (extent(cmd, pts), self.extent_x(cmd, pts, text)) {
+                span = Some(span.map_or([x0, y0, x1, y1], |s| [s[0].min(x0), s[1].min(y0), s[2].max(x1), s[3].max(y1)]));
             }
         };
         if old.len() == new.len() {
             for (a, b) in old.iter().zip(new) {
                 if !same(a, b) {
-                    add(a, old_pts);
-                    add(b, new_pts);
+                    add(a, old_pts, old_text);
+                    add(b, new_pts, new_text);
                 }
             }
         } else {
@@ -216,10 +262,35 @@ impl Renderer {
             let shorter = old.len().min(new.len());
             let head = (0..shorter).take_while(|&i| same(&old[i], &new[i])).count();
             let tail = (0..shorter - head).take_while(|&i| same(&old[old.len() - 1 - i], &new[new.len() - 1 - i])).count();
-            old[head..old.len() - tail].iter().for_each(|c| add(c, old_pts));
-            new[head..new.len() - tail].iter().for_each(|c| add(c, new_pts));
+            old[head..old.len() - tail].iter().for_each(|c| add(c, old_pts, old_text));
+            new[head..new.len() - tail].iter().for_each(|c| add(c, new_pts, new_text));
         }
         span
+    }
+
+    /// Horizontal extent of a command in logical pixels, with a safety
+    /// margin. `text` is the arena its string lives in.
+    fn extent_x(&self, cmd: &DrawCmd, points: &[Vec2], text: &str) -> Option<(f32, f32)> {
+        Some(match *cmd {
+            DrawCmd::Polygon { start, len, .. } => {
+                let (x0, x1) = points[start as usize..(start + len) as usize].iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)));
+                (x0 - 1.0, x1 + 1.0)
+            }
+            DrawCmd::Rect { rect, stroke_width, .. } => (rect.x - stroke_width - 1.0, rect.right() + stroke_width + 1.0),
+            DrawCmd::Shadow { rect, blur, offset, .. } => (rect.x + offset.x - blur - 1.0, rect.right() + offset.x + blur + 1.0),
+            DrawCmd::Text { pos, size, start, len, mono, .. } => {
+                let font = if mono { self.mono.as_ref().unwrap_or(&self.font) } else { &self.font };
+                let px = px_scale(font, size);
+                let mut end = pos.x;
+                walk(font, px, &text[start as usize..(start + len) as usize], pos.x, |id, pen| end = pen + font.as_scaled(px).h_advance(id));
+                // Glyphs may reach a little past their advance on both sides.
+                (pos.x - size, end + size)
+            }
+            DrawCmd::Line { from, to, width, .. } => (from.x.min(to.x) - width - 1.0, from.x.max(to.x) + width + 1.0),
+            // A clip that changes exposes or hides whatever is inside it.
+            DrawCmd::PushClip { rect, .. } => (rect.x - 1.0, rect.right() + 1.0),
+            DrawCmd::Nop | DrawCmd::PopClip => return None,
+        })
     }
 
     /// Rasterizes the glyphs the rows `first..end` will need, so painting
@@ -257,13 +328,24 @@ impl Renderer {
         }
     }
 
-    /// Paints device rows `first..end` of the frame into `rows` (exactly
-    /// those rows of the pixmap). Independent of every other row.
+    /// Paints columns `damage` of device rows `first..end` of the frame
+    /// into `rows` (exactly those rows of the pixmap). Every pixel is
+    /// independent of every other.
     #[allow(clippy::too_many_arguments)]
-    fn paint_rows(&self, list: &DrawList, rows: &mut [u8], width: u32, first: u32, end: u32, scale: f32, background: Color) {
+    fn paint_rows(&self, list: &DrawList, rows: &mut [u8], width: u32, damage: (i32, i32), first: u32, end: u32, scale: f32, background: Color) {
         let stride = width as usize * 4;
-        if let Some(mut all) = PixmapMut::from_bytes(rows, width, end - first) {
-            all.fill(sk_color(background));
+        if damage == (0, width as i32) {
+            if let Some(mut all) = PixmapMut::from_bytes(rows, width, end - first) {
+                all.fill(sk_color(background));
+            }
+        } else {
+            let c = sk_color(background).premultiply().to_color_u8();
+            let px = [c.red(), c.green(), c.blue(), c.alpha()];
+            for row in rows.chunks_exact_mut(stride) {
+                for p in row[damage.0 as usize * 4..damage.1 as usize * 4].as_chunks_mut::<4>().0 {
+                    *p = px;
+                }
+            }
         }
         let mut clips = [Rect::default(); MAX_CLIPS];
         let mut depth = 0usize;
@@ -287,9 +369,12 @@ impl Renderer {
             // Rows of this strip visible through the current clip, and the
             // columns.
             let clip = (depth > 0).then(|| clips[depth.min(MAX_CLIPS) - 1]);
-            let cols = clip.map_or((0, width as i32), |c| {
-                (((c.x * scale).floor() as i32).clamp(0, width as i32), ((c.right() * scale).ceil() as i32).clamp(0, width as i32))
+            let cols = clip.map_or(damage, |c| {
+                (((c.x * scale).floor() as i32).clamp(damage.0, damage.1), ((c.right() * scale).ceil() as i32).clamp(damage.0, damage.1))
             });
+            if cols.1 <= cols.0 {
+                continue;
+            }
             let (y0, y1) = match clip {
                 Some(c) => {
                     (((c.y * scale).round().max(0.0) as u32).clamp(first, end), ((c.bottom() * scale).round().max(0.0) as u32).clamp(first, end))
@@ -300,20 +385,7 @@ impl Renderer {
                 continue;
             }
             if let DrawCmd::Text { pos, size, color, start, len, mono } = *cmd {
-                self.blit_text(
-                    rows,
-                    width,
-                    first,
-                    (y0, y1),
-                    list.text(start, len),
-                    pos.x * scale,
-                    pos.y * scale,
-                    size * scale,
-                    color,
-                    clip,
-                    scale,
-                    mono,
-                );
+                self.blit_text(rows, width, first, (y0, y1), list.text(start, len), pos.x * scale, pos.y * scale, size * scale, color, cols, mono);
                 continue;
             }
             let band = &mut rows[(y0 - first) as usize * stride..(y1 - first) as usize * stride];
@@ -363,7 +435,7 @@ impl Renderer {
     }
 
     /// Blends one line of text into `rows` (which start at device row
-    /// `first`), limited to the rows `band` and to `clip` horizontally.
+    /// `first`), limited to the rows `band` and the columns `cols`.
     #[allow(clippy::too_many_arguments)]
     fn blit_text(
         &self,
@@ -376,8 +448,7 @@ impl Renderer {
         y: f32,
         size: f32,
         color: Color,
-        clip: Option<Rect>,
-        scale: f32,
+        cols: (i32, i32),
         mono: bool,
     ) {
         let mono = mono && self.mono.is_some();
@@ -387,12 +458,8 @@ impl Renderer {
         let baseline = (y + (size * LINE_HEIGHT - (f.ascent() - f.descent())) * 0.5 + f.ascent()).round() as i32;
 
         let pw = width as i32;
-        let (mut x0, mut x1) = (0, pw);
+        let (x0, x1) = cols;
         let (y0, y1) = (band.0 as i32, band.1 as i32);
-        if let Some(c) = clip {
-            x0 = x0.max((c.x * scale).floor() as i32);
-            x1 = x1.min((c.right() * scale).ceil() as i32);
-        }
         if x0 >= x1 {
             return;
         }
@@ -689,4 +756,32 @@ fn blend(px: &mut [u8], r: u8, g: u8, b: u8, a: u32) {
     px[1] = ((g as u32 * a + px[1] as u32 * inv + 127) / 255) as u8;
     px[2] = ((b as u32 * a + px[2] as u32 * inv + 127) / 255) as u8;
     px[3] = ((255 * a + px[3] as u32 * inv + 127) / 255) as u8;
+}
+
+#[cfg(test)]
+mod measure_tests {
+    use super::*;
+
+    /// The cached metrics must be, bit for bit, what the renderer lays text
+    /// out with. Skips itself where no system font is found.
+    #[test]
+    fn cached_widths_are_the_renderers_own() {
+        let paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ];
+        let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) else { return };
+        let font = FontArc::try_from_vec(bytes).unwrap();
+        let measure = FontMeasure::new(font.clone());
+        for size in [11.0f32, 14.25, 15.0, 25.5] {
+            for text in ["", "A", "AVATAR To. Wa", "¿Qué tal, señor? «Año» — 12.480 €", "fi fl ff WAVE Yo.", "mmmmmmmm iiiiiiii"] {
+                let mut end = 0.0;
+                walk(&font, px_scale(&font, size), text, 0.0, |id, pen| end = pen + font.as_scaled(px_scale(&font, size)).h_advance(id));
+                // Twice: filling the cache and reading it back.
+                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}");
+                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}, cached");
+            }
+        }
+    }
 }

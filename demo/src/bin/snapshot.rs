@@ -388,6 +388,19 @@ fn main() {
     s.settle();
     s.save("12h-lista-reordenada");
 
+    // A list of 20 000 rows, far down: only the rows in view exist.
+    s.ui.pointer_moved(Vec2::new(450.0, 130.0));
+    s.ui.scroll_wheel(-20000.0);
+    s.settle();
+    let log = s.ui.rect_of(s.find("registro")).unwrap();
+    s.ui.pointer_moved(log.center());
+    s.ui.scroll_wheel(-34.0 * 12_345.0);
+    s.settle();
+    s.save("12j-lista-de-veinte-mil");
+    assert!(s.text_y("#12346").is_some(), "row 12 346 is in view");
+    s.ui.pointer_left();
+    s.settle();
+
     // The command palette: type, then run with Enter.
     s.state.palette = true;
     s.frames(4);

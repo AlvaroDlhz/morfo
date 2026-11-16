@@ -293,6 +293,7 @@ impl Ui {
     /// progress, a lost connection, a failed build. Long text wraps, and
     /// changing the text of the same `key` morphs the notice in place.
     pub fn notice(&mut self, key: &str, text: &str) {
+        self.busy = true;
         let (id, frame) = (self.declare(key), self.frame);
         match self.notices.iter_mut().find(|n| n.id == id) {
             Some(n) => {

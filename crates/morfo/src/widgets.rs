@@ -155,9 +155,18 @@ impl Ui {
     }
 
     /// A raised container of fixed width. Its height follows its content,
-    /// fluidly.
+    /// fluidly. Keys inside it are namespaced under `key`. Inside a scroll
+    /// area, a card far outside the view is not built (see
+    /// [`set_lazy`](Self::set_lazy)).
     pub fn card_w(&mut self, key: &str, width: f32, f: impl FnOnce(&mut Ui)) {
         let id = self.declare(key);
+        // Far outside the view of its scroll area, it is not built at all.
+        let stamp = self.layout_stamp(width);
+        if let Some(size) = self.rest(id, stamp) {
+            self.advance(size);
+            return;
+        }
+        let waking = self.wake(id);
         let pad = self.theme.pad;
         let shadow_slot = self.draw.reserve();
         let bg_slot = self.draw.reserve();
@@ -177,6 +186,7 @@ impl Ui {
         self.draw.set(shadow_slot, DrawCmd::Shadow { rect: r, radius, blur: 28.0, offset: Vec2::new(0.0, 10.0), color: self.pal[SHADOW].fade(a) });
         self.draw
             .set(bg_slot, DrawCmd::Rect { rect: r, radius, fill: self.pal[SURFACE].fade(a), stroke: self.pal[BORDER].fade(a), stroke_width: 1.0 });
+        self.built(id, stamp, waking);
     }
 
     /// A block of source code, one string per line, in the monospaced font.

@@ -42,6 +42,7 @@ mod habits;
 pub mod id;
 mod input;
 mod layout;
+mod lazy;
 mod morph;
 mod navigate;
 mod overlay;

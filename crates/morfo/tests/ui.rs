@@ -2354,3 +2354,122 @@ fn a_style_is_inherited_by_what_is_inside() {
     let accent = ui.palette()[morfo::theme::ACCENT];
     assert_eq!(rects_of(&ui, accent).len(), 2, "«Normal» and «Grande» are solid; «Discreto» is not");
 }
+
+// ----- doing less ------------------------------------------------------------
+
+#[test]
+fn a_virtual_list_only_builds_the_rows_in_view() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let built = Cell::new(0);
+    let build = |ui: &mut Ui| {
+        built.set(0);
+        ui.virtual_list("filas", 20_000, 30.0, 300.0, |ui, i| {
+            built.set(built.get() + 1);
+            ui.label(&format!("Fila {i}"));
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    assert!(built.get() <= 11, "{} rows built for a view of ten", built.get());
+    assert!(ui.node_count() < 40, "{} elements alive", ui.node_count());
+    let list = ui.rect_of(ui.id("filas")).unwrap();
+    assert_eq!(text_at(&ui, "Fila 0").unwrap().0.y.round(), (list.y + (30.0 - 15.0 * 1.3) * 0.5).round(), "centered in its row");
+    assert!(text_at(&ui, "Fila 15").is_none());
+
+    // Far down the list: the rows there, as they are (no entrance), and
+    // the first ones gone.
+    ui.pointer_moved(list.center());
+    ui.scroll_wheel(-30.0 * 5000.0);
+    for _ in 0..200 {
+        if !frame(&mut ui, &mut t, build) {
+            break;
+        }
+        for (s, _, a) in texts_at(&ui) {
+            assert!(a > 0.99, "«{s}» is fading in");
+        }
+    }
+    let (p, _) = text_at(&ui, "Fila 5000").expect("row 5000 is in view");
+    assert!((p.y - list.y - (30.0 - 15.0 * 1.3) * 0.5).abs() < 1.0, "at the top: {} vs {}", p.y, list.y);
+    assert!(text_at(&ui, "Fila 0").is_none() && built.get() <= 11);
+    // And the end is where 20 000 rows end.
+    ui.scroll_wheel(-1.0e9);
+    settle(&mut ui, &mut t, build);
+    assert!(text_at(&ui, "Fila 19999").is_some());
+}
+
+/// Every text drawn, with its position and opacity.
+fn texts_at(ui: &Ui) -> Vec<(String, Vec2, f32)> {
+    let list = ui.draw_list();
+    list.commands()
+        .iter()
+        .filter_map(|c| {
+            if let DrawCmd::Text { pos, color, start, len, .. } = *c {
+                Some((list.text(start, len).to_string(), pos, color.a))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn cards_far_from_view_are_not_built() {
+    let built = Cell::new(0);
+    let name = RefCell::new(String::new());
+    let build = |ui: &mut Ui| {
+        built.set(0);
+        ui.scroll("pagina", 400.0, |ui| {
+            for i in 0..60 {
+                ui.card(&format!("tarjeta-{i}"), |ui| {
+                    built.set(built.get() + 1);
+                    ui.label(&format!("Tarjeta {i}"));
+                    if i == 1 {
+                        ui.text_field("nombre", &mut name.borrow_mut(), "Nombre", 200.0);
+                    }
+                    ui.button("abrir", "Abrir");
+                });
+            }
+        });
+    };
+    // With and without it, everything is in the same place.
+    let (mut eager, mut te) = (Ui::new(Theme::dark()), 0.0);
+    eager.set_lazy(false);
+    settle(&mut eager, &mut te, build);
+    assert_eq!(built.get(), 60);
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    settle(&mut ui, &mut t, build);
+    frame(&mut ui, &mut t, build);
+    assert!(built.get() < 20, "{} of 60 cards built", built.get());
+    assert!(ui.find("tarjeta-50").is_some(), "the card keeps its place");
+    assert!(ui.find_all("abrir").len() < 20, "what it holds is not built, so it is not found");
+
+    // Scrolled to the end, the last card is where it would have been, and
+    // it shows as it is: nothing fades in.
+    for u in [&mut eager, &mut ui] {
+        u.pointer_moved(Vec2::new(100.0, 200.0));
+        u.scroll_wheel(-1.0e6);
+    }
+    settle(&mut eager, &mut te, build);
+    for _ in 0..300 {
+        let moving = frame(&mut ui, &mut t, build);
+        for (s, _, a) in texts_at(&ui) {
+            assert!(a > 0.99, "«{s}» is fading in");
+        }
+        if !moving {
+            break;
+        }
+    }
+    let last = |u: &Ui| text_at(u, "Tarjeta 59").unwrap().0;
+    assert_eq!(last(&ui), last(&eager));
+    assert!(built.get() < 20);
+
+    // A card that holds the focus keeps being built, wherever it is.
+    ui.scroll_wheel(1.0e6);
+    settle(&mut ui, &mut t, build);
+    let field = ui.find("nombre").unwrap();
+    click(&mut ui, &mut t, field, build);
+    ui.scroll_wheel(-1.0e6);
+    settle(&mut ui, &mut t, build);
+    ui.text_input("Ana");
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*name.borrow(), "Ana", "typing still reaches the field out of view");
+}

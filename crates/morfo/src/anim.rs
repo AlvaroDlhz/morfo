@@ -77,7 +77,13 @@ impl SpringStep {
 
     #[inline(always)]
     fn apply(&self, value: &mut f32, velocity: &mut f32, target: f32) -> f32 {
-        let x = *value - target;
+        let mut x = *value - target;
+        // Far from zero a float cannot get closer than its own spacing: the
+        // last step would be rounded back and never taken (a scroll area
+        // 100 000 px down would never come to rest). That close is there.
+        if x.abs() <= target.abs() * (2.0 * f32::EPSILON) {
+            x = 0.0;
+        }
         let v = *velocity;
         let nx = self.a * x + self.b * v;
         let nv = self.c * x + self.d * v;
@@ -244,6 +250,22 @@ mod tests {
             }
             assert_eq!(m.get(), 100.0);
             assert!(m.is_resting());
+        }
+    }
+
+    #[test]
+    fn rests_far_from_zero() {
+        // Where a float's spacing is coarser than the rest threshold.
+        for target in [40_000.0f32, 150_000.0, 599_700.0, 4.0e6, -2.5e5] {
+            let k = SpringStep::new(Spring::SNAPPY, 1.0 / 60.0);
+            let mut m = Motion::new(0.0f32);
+            m.set(target);
+            let mut frames = 0;
+            while m.tick(&k) {
+                frames += 1;
+                assert!(frames < 600, "never settled at {target}");
+            }
+            assert_eq!(m.get(), target);
         }
     }
 

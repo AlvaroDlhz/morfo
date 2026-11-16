@@ -76,6 +76,12 @@ programa pueden acabar viendo interfaces distintas.
   el aprendizaje (`frozen`), copiar su perfil o borrarlo entero.
 - **Coste cero en reposo.** `ui.end()` indica si algo sigue moviéndose; si no,
   el programa no dibuja ni calcula nada hasta el siguiente evento.
+- **Solo el trabajo que se ve.** Un frame estable del núcleo no asigna
+  memoria. Las medidas de
+  texto y el partido en líneas de cada párrafo se recuerdan mientras no
+  cambien; las tarjetas lejos de la vista de su área de scroll no se
+  construyen; y el renderizador por CPU repinta solo el rectángulo que
+  cambió.
 - **Independiente del renderizador.** El núcleo no tiene ninguna dependencia
   y produce una lista plana de primitivas. Hay tres backends: CPU
   (`morfo-skia`), GPU (`morfo-wgpu`) y web (`morfo-web`, WebAssembly sobre
@@ -125,7 +131,7 @@ pintar para que el primero que se vea esté ya quieto y en su sitio.
 | Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
 | Controles | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (rango con dos manijas), `knob` (perilla), `xy_pad` (pad de dos ejes), `rating` (estrellas), `swatches` (muestras de color) |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
-| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll` (rebota al pasar de un extremo), `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida), `splitter` (dos paneles con un divisor que se arrastra) |
+| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll` (rebota al pasar de un extremo), `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida), `splitter` (dos paneles con un divisor que se arrastra), `virtual_list` (lista de filas iguales que solo construye las que se ven: cuesta lo mismo con cien filas que con cien mil) |
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `notice` (aviso fijo en una esquina mientras se declare: trabajo en curso, sin conexión, un error), `close` |
 | Navegación | `course_nav` (temario de curso en el borde izquierdo: módulos, lecciones numeradas en una línea de tiempo y progreso que se recuerda), `side_nav` (índice simple), `search` (lupa que se despliega en un buscador con resultados), `tabs` (subrayado que salta entre pestañas), `breadcrumbs` (el centro se pliega en «…» si no cabe), `tree` (ramas que se despliegan; recuerda cuáles están abiertas), `pagination`, `drawer` (panel que entra por un lado de la ventana) |
 | Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
@@ -248,19 +254,23 @@ Con la documentación (`--release`, ventana de 900×780 a 2× = 1800×1560 px,
 portátil de 4 núcleos con otros programas abiertos). Las produce
 `cargo run --release -p morfo-demo --bin snapshot`:
 
-| Situación | Pintado por frame | Filas repintadas |
+| Situación | Pintado por frame | Filas que abarca |
 | --- | --- | --- |
 | En reposo | nada | 0 % |
-| Mover el ratón sobre botones | ~1 ms | 6 % |
-| Escribir en un campo de texto | ~1 ms | 4–7 % |
-| Cambiar de página (todo se mueve) | ~11 ms | 86 % |
-| Abrir un diálogo (oscurece la pantalla) | ~12 ms | 72 % |
+| Mover el ratón sobre botones | 0,3–0,6 ms | 6 % |
+| Escribir en un campo de texto | 0,2–0,4 ms | 4–7 % |
+| Cambiar de página (todo se mueve) | ~9 ms | 86 % |
+| Abrir un diálogo (oscurece la pantalla) | ~11 ms | 72 % |
 
-Construir la interfaz y avanzar todas las animaciones cuesta entre 40 y
-200 µs por frame según la carga de la máquina.
+Construir la interfaz y avanzar todas las animaciones cuesta unos 50 µs por
+frame de media en la documentación (entre 30 y 100 µs según la página), y
+un frame estable del núcleo no asigna memoria. Lo que está lejos de la vista
+no cuenta: una página de scroll con 2000 tarjetas de diez botones se
+construye en 0,17 ms, y una lista virtual cuesta lo mismo con cien filas que
+con veinte mil.
 
-El renderizador repinta solo las filas que cambian respecto al frame
-anterior, las reparte en franjas entre hilos y dibuja rectángulos y sombras
+El renderizador repinta solo el rectángulo que cambia respecto al frame
+anterior, lo reparte en franjas entre hilos y dibuja rectángulos y sombras
 con un rasterizador propio que solo calcula el contorno. El simulador
 comprueba que el resultado incremental es idéntico, píxel a píxel, a un
 repintado completo.
@@ -284,9 +294,17 @@ repintado completo.
   en Wayland vuelve donde el compositor decida.
 - Una fuente normal y una monoespaciada; sin negritas, cursivas ni texto
   bidireccional (árabe, hebreo).
-- La tabla dibuja todas sus filas; para miles de filas hace falta paginarla.
-- El scroll es vertical y con rueda (sin arrastrar la barra); dibuja solo lo
-  visible, pero recorre el layout de todo el contenido.
+- La tabla dibuja todas sus filas; para miles de filas, `virtual_list` o
+  paginarla.
+- El scroll es vertical y con rueda (sin arrastrar la barra). Dentro de un
+  área de scroll, las tarjetas lejos de la vista no se construyen: conservan
+  el tamaño que tenían la última vez que se vieron, así que si su contenido
+  cambia de tamaño mientras tanto, solo ocupa el nuevo al acercarse, y
+  `find` no encuentra lo que contienen. El resto del contenido fuera de la
+  vista no se dibuja, pero sí pasa por el layout. `set_lazy(false)` lo
+  desactiva.
+- `virtual_list` coloca las filas con exactitud hasta unas decenas de miles;
+  mucho más allá pueden quedar a una fracción de píxel de su sitio.
 - Durante una mutación, una transición o una entrada con `scroll_reveal`, los
   controles nuevos ya responden en su posición final, aunque aún se estén
   dibujando a medio camino. La vista que se va en una transición es solo una
@@ -299,8 +317,8 @@ repintado completo.
 - En la web el texto lo dibuja el navegador con fuentes del sistema, así que
   puede variar algún píxel respecto al escritorio, y el recorte es
   rectangular.
-- El backend por CPU recorta las formas por bandas de filas, no por
-  rectángulos arbitrarios (el texto sí se recorta exacto).
+- El backend por CPU recorta por rectángulos: ignora el radio de las
+  esquinas de un recorte.
 - Los hábitos por hora del día necesitan que el programa indique la zona
   horaria (`Profile::time_of_day`); la demo y la web lo hacen.
 

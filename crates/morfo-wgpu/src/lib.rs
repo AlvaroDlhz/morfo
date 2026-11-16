@@ -13,7 +13,9 @@
 //! When nothing changed since the last frame, [`Renderer::changed`] says so
 //! and the host can skip acquiring and presenting a surface texture at all.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Range;
 
 use ab_glyph::{point, Font, FontArc, GlyphId, PxScale, ScaleFont};
@@ -77,12 +79,62 @@ fn walk(font: &FontArc, px: PxScale, text: &str, x: f32, mut f: impl FnMut(Glyph
 
 /// Text metrics matching what [`Renderer`] draws. Give it to
 /// [`morfo::Ui::set_text_measure`].
-pub struct FontMeasure(FontArc);
+///
+/// It remembers the glyph and advance of every character it has seen and
+/// the kerning of every pair, so measuring a string is a few table lookups
+/// per character instead of a walk through the font's tables.
+pub struct FontMeasure {
+    font: FontArc,
+    /// Glyph and unscaled advance of each character.
+    glyphs: RefCell<HashMap<char, (GlyphId, f32), Mixed>>,
+    /// Unscaled kerning of each pair of glyphs (`first << 16 | second`).
+    kerns: RefCell<HashMap<u32, f32, Mixed>>,
+}
+
+/// Hasher for small integer keys: one multiplication.
+#[derive(Default, Clone, Copy)]
+struct Mix(u64);
+type Mixed = BuildHasherDefault<Mix>;
+
+impl Hasher for Mix {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u32(b as u32);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = (self.0 ^ v as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+impl FontMeasure {
+    fn new(font: FontArc) -> FontMeasure {
+        FontMeasure { font, glyphs: RefCell::default(), kerns: RefCell::default() }
+    }
+}
 
 impl TextMeasure for FontMeasure {
     fn width(&self, text: &str, size: f32) -> f32 {
+        // Scaled metrics are the unscaled ones times this factor, which is
+        // exactly what the renderer's own layout computes.
+        let h = self.font.as_scaled(px_scale(&self.font, size)).h_scale_factor();
+        let (mut glyphs, mut kerns) = (self.glyphs.borrow_mut(), self.kerns.borrow_mut());
         let mut w = 0.0;
-        walk(&self.0, px_scale(&self.0, size), text, 0.0, |id, pen| w = pen + self.0.as_scaled(px_scale(&self.0, size)).h_advance(id));
+        let mut prev: Option<GlyphId> = None;
+        for ch in text.chars() {
+            let (g, advance) = *glyphs.entry(ch).or_insert_with(|| {
+                let g = self.font.glyph_id(ch);
+                (g, self.font.h_advance_unscaled(g))
+            });
+            if let Some(p) = prev {
+                w += h * *kerns.entry((p.0 as u32) << 16 | g.0 as u32).or_insert_with(|| self.font.kern_unscaled(p, g));
+            }
+            w += h * advance;
+            prev = Some(g);
+        }
         w
     }
 }
@@ -278,7 +330,7 @@ impl Renderer {
     }
 
     pub fn measure(&self) -> FontMeasure {
-        FontMeasure(self.font.clone())
+        FontMeasure::new(self.font.clone())
     }
 
     /// Whether `list` would draw anything different from the last frame
@@ -557,4 +609,32 @@ fn bind(
             wgpu::BindGroupEntry { binding: 3, resource: points.as_entire_binding() },
         ],
     })
+}
+
+#[cfg(test)]
+mod measure_tests {
+    use super::*;
+
+    /// The cached metrics must be, bit for bit, what the renderer lays text
+    /// out with. Skips itself where no system font is found.
+    #[test]
+    fn cached_widths_are_the_renderers_own() {
+        let paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ];
+        let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) else { return };
+        let font = FontArc::try_from_vec(bytes).unwrap();
+        let measure = FontMeasure::new(font.clone());
+        for size in [11.0f32, 14.25, 15.0, 25.5] {
+            for text in ["", "A", "AVATAR To. Wa", "¿Qué tal, señor? «Año» — 12.480 €", "fi fl ff WAVE Yo.", "mmmmmmmm iiiiiiii"] {
+                let mut end = 0.0;
+                walk(&font, px_scale(&font, size), text, 0.0, |id, pen| end = pen + font.as_scaled(px_scale(&font, size)).h_advance(id));
+                // Twice: filling the cache and reading it back.
+                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}");
+                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}, cached");
+            }
+        }
+    }
 }

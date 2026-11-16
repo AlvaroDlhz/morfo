@@ -171,6 +171,7 @@ impl Ui {
     /// Runs `f` laid out from `origin` in paint layer `layer`, outside the
     /// normal flow: no clip, no inherited opacity.
     pub(crate) fn detached(&mut self, layer: usize, id: Id, origin: Vec2, width: f32, f: impl FnOnce(&mut Ui)) {
+        self.busy = true;
         let depth = self.layouts.len();
         let (alpha, clip, cull, shift) = (self.alpha, self.clip, self.draw.cull.take(), std::mem::take(&mut self.shift));
         let below = self.draw.set_layer(layer);
