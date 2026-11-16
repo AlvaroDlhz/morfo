@@ -112,6 +112,19 @@ impl DrawList {
     pub(crate) fn drain_from(&mut self, mark: usize, into: &mut Vec<DrawCmd>) {
         into.extend(self.layers[self.layer].drain(mark..));
     }
+    /// Rewrites, in place, the commands of the current layer recorded since
+    /// `mark` with `f`, and the points of their polygons with `p`.
+    pub(crate) fn map_from(&mut self, mark: usize, f: impl Fn(DrawCmd) -> DrawCmd, p: impl Fn(Vec2) -> Vec2) {
+        let layer = &mut self.layers[self.layer];
+        for cmd in &mut layer[mark..] {
+            *cmd = f(*cmd);
+            if let DrawCmd::Polygon { start, len, .. } = *cmd {
+                for q in &mut self.points[start as usize..(start + len) as usize] {
+                    *q = p(*q);
+                }
+            }
+        }
+    }
     pub(crate) fn layer(&self) -> usize {
         self.layer
     }

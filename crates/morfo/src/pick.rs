@@ -11,7 +11,7 @@ use crate::ui::{Key, Ui, LINE_HEIGHT};
 use crate::widgets::{Size, Variant};
 
 /// Lowercase without accents, for matching typed text against labels.
-fn fold(s: &str) -> String {
+pub(crate) fn fold(s: &str) -> String {
     s.chars()
         .flat_map(char::to_lowercase)
         .map(|c| match c {
@@ -29,7 +29,7 @@ fn fold(s: &str) -> String {
 
 /// How well `needle` matches `hay` (both folded), or `None`. A contiguous
 /// match beats a scattered one, and an earlier one beats a later one.
-fn fuzzy(hay: &str, needle: &str) -> Option<i32> {
+pub(crate) fn fuzzy(hay: &str, needle: &str) -> Option<i32> {
     if needle.is_empty() {
         return Some(0);
     }
@@ -78,7 +78,7 @@ impl Ui {
     /// itself, with a check on the current choice. Returns `true` when the
     /// selection changed.
     pub fn select(&mut self, key: &str, options: &[&str], selected: &mut usize) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let (font, pad, h) = (self.theme.font, self.theme.pad * 0.8, self.theme.control);
         let widest = options.iter().map(|o| self.text.width(o, font)).fold(0.0, f32::max);
         let target = self.alloc(Vec2::new(widest + pad * 2.0 + 30.0, h));
@@ -135,7 +135,7 @@ impl Ui {
     /// and case don't matter). The arrows move through the suggestions,
     /// Enter or a click picks one. Returns `true` when an option was picked.
     pub fn combobox(&mut self, key: &str, options: &[&str], selected: &mut Option<usize>, query: &mut String, placeholder: &str, width: f32) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let state = id.child("state");
         let (up, down) = (self.keys.iter().filter(|k| **k == Key::Up).count(), self.keys.iter().filter(|k| **k == Key::Down).count());
         let edit = self.text_field(key, query, placeholder, width);
@@ -180,7 +180,7 @@ impl Ui {
     /// With nothing typed, the commands this person uses most come first:
     /// the palette learns. Returns the index of the command chosen.
     pub fn command_palette(&mut self, key: &str, open: &mut bool, commands: &[(&str, &str)]) -> Option<usize> {
-        let id = self.id(key);
+        let id = self.declare(key);
         let state = id.child("state");
         let field = id.child("query");
         let now = self.now;
@@ -269,7 +269,7 @@ impl Ui {
     /// Enter, or a click, choose; Escape or clicking elsewhere fold it back.
     /// `items` are `(key, label)`; returns the index of the item chosen.
     pub fn search(&mut self, key: &str, placeholder: &str, open: &mut bool, items: &[(&str, &str)], width: f32) -> Option<usize> {
-        let id = self.id(key);
+        let id = self.declare(key);
         let (field, query_id, state) = (id.child("campo"), id.child("consulta"), id.child("estado"));
         let rows = id.child("resultado");
         let now = self.now;

@@ -143,16 +143,17 @@ impl Ui {
 
     /// Content that fluidly opens and closes, pushing its siblings along.
     /// While closed it costs nothing: `f` is not even called.
+    /// Keys inside `f` are namespaced under `key`.
     pub fn reveal(&mut self, key: &str, open: bool, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
-        self.reveal_id(id, open, f);
+        let id = self.declare(key);
+        self.reveal_id(id, open, |ui| ui.within(id, f));
     }
 
     /// Spring-driven visibility, `0..1`, for content of your own that should
     /// animate out as well as in: keep declaring it while the result is
     /// above zero, scaled or faded by it.
     pub fn presence(&mut self, key: &str, shown: bool) -> f32 {
-        let id = self.id(key);
+        let id = self.declare(key);
         self.presence_id(id, shown, SpringKind::Smooth)
     }
 
@@ -171,7 +172,7 @@ impl Ui {
     /// normal flow: no clip, no inherited opacity.
     pub(crate) fn detached(&mut self, layer: usize, id: Id, origin: Vec2, width: f32, f: impl FnOnce(&mut Ui)) {
         let depth = self.layouts.len();
-        let (alpha, clip, cull) = (self.alpha, self.clip, self.draw.cull.take());
+        let (alpha, clip, cull, shift) = (self.alpha, self.clip, self.draw.cull.take(), std::mem::take(&mut self.shift));
         let below = self.draw.set_layer(layer);
         self.alpha = 1.0;
         self.clip = None;
@@ -193,6 +194,7 @@ impl Ui {
         self.draw.cull = cull;
         self.alpha = alpha;
         self.clip = clip;
+        self.shift = shift;
     }
 
     pub(crate) fn reveal_id(&mut self, id: Id, open: bool, f: impl FnOnce(&mut Ui)) {

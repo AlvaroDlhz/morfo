@@ -38,7 +38,7 @@ impl Ui {
     /// the track takes the nearest thumb; neither can pass the other.
     /// Returns `true` while the user is changing it.
     pub fn range_slider(&mut self, key: &str, lo: &mut f32, hi: &mut f32, width: f32) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let h = (self.theme.control * 0.6).round();
         let target = self.alloc(Vec2::new(width, h));
         let (r, life) = self.enter(id, target, Smooth);
@@ -117,7 +117,7 @@ impl Ui {
     pub fn knob(&mut self, key: &str, label: &str, value: &mut f32) -> bool {
         const START: f32 = 0.75 * PI;
         const SWEEP: f32 = 1.5 * PI;
-        let id = self.id(key);
+        let id = self.declare(key);
         let d = (self.theme.control * 1.7).round();
         let font = self.theme.font * 0.85;
         let label_w = self.text.width(label, font);
@@ -188,7 +188,7 @@ impl Ui {
     /// A rating of up to `max` stars. Hovering previews, clicking sets it, and
     /// clicking the current value clears it. Returns `true` when it changed.
     pub fn rating(&mut self, key: &str, value: &mut u8, max: u8) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let s = (self.theme.control * 0.8).round();
         let gap = 4.0;
         let count = max.max(1) as usize;
@@ -242,7 +242,7 @@ impl Ui {
     /// A row of color swatches; the selection ring springs between them.
     /// Returns `true` when the selection changed.
     pub fn swatches(&mut self, key: &str, colors: &[Color], selected: &mut usize) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let d = (self.theme.control * 0.72).round();
         let gap = 10.0;
         let count = colors.len();
@@ -286,6 +286,7 @@ impl Ui {
         if let Some(cell) = ring {
             let (bouncy, gentle) = (self.steps[Bouncy as usize], self.steps[Gentle as usize]);
             let n = self.nodes.entry(id.child("ring")).or_insert_with(Node::new);
+            n.reframe(self.frame, self.shift);
             let anim = n.begin(self.frame, cell.inset(-4.0), &bouncy, &gentle);
             let rr = n.rect.get();
             self.animating |= anim;
@@ -298,7 +299,7 @@ impl Ui {
     /// in `0..=1` on both axes, `(0, 0)` at the top left. Returns `true`
     /// while the user is changing it.
     pub fn xy_pad(&mut self, key: &str, value: &mut Vec2, size: Vec2) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let target = self.alloc(size);
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);

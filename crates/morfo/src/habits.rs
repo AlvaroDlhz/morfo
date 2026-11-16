@@ -69,7 +69,7 @@ impl Ui {
     /// `source` (as in [`adaptive_actions`](Self::adaptive_actions)).
     /// Returns the index of the item when clicked.
     pub fn predicted_action(&mut self, key: &str, title: &str, source: &str, items: &[(&str, &str)]) -> Option<usize> {
-        let id = self.id(key);
+        let id = self.declare(key);
         let src = self.id(source);
         let guess = self.profile.predict(self.now).and_then(|(next, _)| items.iter().position(|(k, _)| src.child(k) == next));
         // Keep showing what was predicted while it animates away.
@@ -98,7 +98,7 @@ impl Ui {
     /// `true` when it was used (opened, clicked...). Nothing moves while the
     /// pointer is over the grid.
     pub fn adaptive_dashboard(&mut self, key: &str, tiles: &[(&str, &str)], columns: usize, mut f: impl FnMut(&mut Ui, usize, Prominence) -> bool) {
-        let group = self.id(key);
+        let group = self.declare(key);
         let cols = columns.max(1);
         let mut order = self.orders.remove(&group).unwrap_or_default();
         if order.len() != tiles.len() {
@@ -140,7 +140,9 @@ impl Ui {
                         let (tile, _) = tiles[i as usize];
                         let width = cell * span(level) as f32 + gap * (span(level) - 1) as f32;
                         let mut used = false;
-                        ui.card_w(tile, width, |ui| used = f(ui, i as usize, level));
+                        // Each tile is the dashboard's: its use is learned
+                        // under the same id it is declared with.
+                        ui.within(group, |ui| ui.card_w(tile, width, |ui| used = f(ui, i as usize, level)));
                         if used {
                             used_tiles.push(i as usize);
                         }
@@ -173,14 +175,14 @@ impl Ui {
     /// last appearance shrinks and fades away while what follows closes
     /// the gap — even though `f` is no longer called.
     pub fn transient(&mut self, key: &str, shown: bool, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let p = self.presence_id(id.child("presence"), shown, Smooth).clamp(0.0, 1.0);
         let gap = self.theme.gap;
         if shown {
             let mark = self.draw.mark();
             let saved = self.alpha;
             self.alpha *= smoothstep(p);
-            let (origin, size) = self.group(id, Dir::Column, Vec2::ZERO, gap, None, f);
+            let (origin, size) = self.group(id, Dir::Column, Vec2::ZERO, gap, None, |ui| ui.within(id, f));
             self.alpha = saved;
             let mut snap = self.transients.remove(&id).unwrap_or_default();
             snap.capture(self.draw.cmds_from(mark), &self.draw, Rect::from_min_size(origin, size));
@@ -199,7 +201,7 @@ impl Ui {
         // moves up to take its place.
         let slot = Rect::new(origin.x - 40.0, origin.y - 8.0, self.available_width() + 80.0, size.y * p + 8.0);
         self.draw.push(crate::draw::DrawCmd::PushClip { rect: slot, radius: 0.0 });
-        self.replay(&snap, to, smoothstep(p), None);
+        self.replay(&snap, to, smoothstep(p), None, &[]);
         self.draw.push(crate::draw::DrawCmd::PopClip);
         self.advance(Vec2::new(size.x, (size.y + gap) * p - gap));
         self.transients.insert(id, snap);

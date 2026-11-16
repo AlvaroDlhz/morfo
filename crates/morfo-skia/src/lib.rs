@@ -284,8 +284,12 @@ impl Renderer {
                 DrawCmd::Nop => continue,
                 _ => {}
             }
-            // Rows of this strip visible through the current clip.
+            // Rows of this strip visible through the current clip, and the
+            // columns.
             let clip = (depth > 0).then(|| clips[depth.min(MAX_CLIPS) - 1]);
+            let cols = clip.map_or((0, width as i32), |c| {
+                (((c.x * scale).floor() as i32).clamp(0, width as i32), ((c.right() * scale).ceil() as i32).clamp(0, width as i32))
+            });
             let (y0, y1) = match clip {
                 Some(c) => {
                     (((c.y * scale).round().max(0.0) as u32).clamp(first, end), ((c.bottom() * scale).round().max(0.0) as u32).clamp(first, end))
@@ -320,13 +324,13 @@ impl Renderer {
                         // Coverage only varies near the left and right ends;
                         // in between it depends on the row alone.
                         let reach = shape.r + 1.0;
-                        paint(band, width, y0, y1, shape.bounds(1.0), shape.middle(reach), fill, |x, y| edge(shape.distance(x, y)));
+                        paint(band, width, cols, y0, y1, shape.bounds(1.0), shape.middle(reach), fill, |x, y| edge(shape.distance(x, y)));
                     }
                     let w = stroke_width * scale;
                     if w > 0.0 && stroke.a > 0.002 {
                         let inner = Shape::new(rect.inset(stroke_width), radius - stroke_width, scale);
                         let reach = shape.r.max(w) + 1.0;
-                        paint(band, width, y0, y1, shape.bounds(1.0), shape.middle(reach), stroke, |x, y| {
+                        paint(band, width, cols, y0, y1, shape.bounds(1.0), shape.middle(reach), stroke, |x, y| {
                             edge(shape.distance(x, y)) - if inner.empty() { 0.0 } else { edge(inner.distance(x, y)) }
                         });
                     }
@@ -340,18 +344,18 @@ impl Renderer {
                     let shape = Shape::new(rect.translate(offset), radius, scale);
                     let blur = (blur * scale).max(0.01);
                     let reach = shape.r.max(0.35 * blur) + 1.0;
-                    paint(band, width, y0, y1, shape.bounds(0.65 * blur + 1.0), shape.middle(reach), color, |x, y| {
+                    paint(band, width, cols, y0, y1, shape.bounds(0.65 * blur + 1.0), shape.middle(reach), color, |x, y| {
                         let t = 1.0 - (shape.distance(x, y) / blur + 0.35).clamp(0.0, 1.0);
                         t * t
                     });
                 }
                 DrawCmd::Polygon { start, len, color } => {
-                    fill_polygon(band, width, y0, y1, list.points(start, len), scale, color);
+                    fill_polygon(band, width, cols, y0, y1, list.points(start, len), scale, color);
                 }
                 DrawCmd::Line { from, to, width: stroke_width, color } => {
                     // A stroke with round ends is a capsule; filling it with the
                     // row-by-row rasterizer keeps partial repaints exact.
-                    fill_polygon(band, width, y0, y1, &capsule(from, to, stroke_width * 0.5), scale, color);
+                    fill_polygon(band, width, cols, y0, y1, &capsule(from, to, stroke_width * 0.5), scale, color);
                 }
                 _ => {}
             }
@@ -527,6 +531,7 @@ fn edge(d: f32) -> f32 {
 fn paint(
     band: &mut [u8],
     width: u32,
+    cols: (i32, i32),
     y0: u32,
     y1: u32,
     bounds: (f32, f32, f32, f32),
@@ -534,9 +539,8 @@ fn paint(
     color: Color,
     coverage: impl Fn(f32, f32) -> f32,
 ) {
-    let w = width as i32;
-    let x_start = (bounds.0.floor() as i32).clamp(0, w);
-    let x_end = (bounds.2.ceil() as i32).clamp(0, w);
+    let x_start = (bounds.0.floor() as i32).clamp(cols.0, cols.1);
+    let x_end = (bounds.2.ceil() as i32).clamp(cols.0, cols.1);
     let row_start = (bounds.1.floor().max(0.0) as u32).max(y0);
     let row_end = (bounds.3.ceil().max(0.0) as u32).min(y1);
     if x_start >= x_end || row_start >= row_end {
@@ -587,7 +591,8 @@ fn paint(
 /// Each row is computed on its own, from four sub-scanlines with exact
 /// horizontal coverage, so the pixels never depend on how the frame is cut
 /// into bands: partial repaints match full ones exactly.
-fn fill_polygon(band: &mut [u8], width: u32, y0: u32, y1: u32, pts: &[Vec2], scale: f32, color: Color) {
+#[allow(clippy::too_many_arguments)]
+fn fill_polygon(band: &mut [u8], width: u32, cols: (i32, i32), y0: u32, y1: u32, pts: &[Vec2], scale: f32, color: Color) {
     const SUB: usize = 4;
     if pts.len() < 3 {
         return;
@@ -599,8 +604,8 @@ fn fill_polygon(band: &mut [u8], width: u32, y0: u32, y1: u32, pts: &[Vec2], sca
     }
     let row_start = (min_y.floor().max(0.0) as u32).max(y0);
     let row_end = (max_y.ceil().max(0.0) as u32).min(y1);
-    let x_start = (min_x.floor().max(0.0) as usize).min(width as usize);
-    let x_end = (max_x.ceil().max(0.0) as usize).min(width as usize);
+    let x_start = (min_x.floor() as i32).clamp(cols.0, cols.1) as usize;
+    let x_end = (max_x.ceil() as i32).clamp(cols.0, cols.1) as usize;
     if row_start >= row_end || x_start >= x_end {
         return;
     }

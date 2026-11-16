@@ -4,33 +4,181 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use morfo::theme::{ACCENT, BORDER, TEXT};
-use morfo::{Align, Color, Icon, Prominence, Size, Ui, Variant, Vec2};
+use morfo::{Align, Color, DrawList, Icon, Prominence, Rect, Reveal, Side, Size, Transition, Ui, Variant, Vec2};
 
 use crate::*;
 use morfo::Prominence as P;
 
+/// Una línea por página, en el orden de [`PAGES`]: qué aprende quien llega a ella.
+const DESCRIPCIONES: [&str; 18] = [
+    "Las ideas de morfo, el ciclo de un frame y las reglas que lo sostienen.",
+    "Variantes, tamaños y los cinco tipos de botón.",
+    "Interruptores, deslizadores, perillas y otros controles de valor.",
+    "Casillas, radios, etiquetas, contadores y acordeones.",
+    "row, column, grid, card, reveal y scroll: cómo se colocan las cosas.",
+    "Superficies que fluyen de una forma a otra, y dibujo con arcos y polígonos.",
+    "Diálogos, menús, avisos y tooltips que flotan sobre lo demás.",
+    "Campos de texto, áreas multilínea, desplegables y buscadores.",
+    "Interfaces que se reordenan y se adaptan al uso de cada persona.",
+    "Un componente que se transforma en otro sin cortes.",
+    "Tablas ordenables y listas que se reordenan arrastrando.",
+    "Barras, líneas, tendencias, mapas de calor y medidores que viajan a sus datos.",
+    "Pestañas, migas de pan, árboles, paginadores y un panel lateral.",
+    "Fechas, colores, etiquetas, varias opciones a la vez y atajos de teclado.",
+    "Esqueletos de carga, insignias, procesos por pasos, divisores y tableros.",
+    "Contenido que entra al verse, contadores, paralaje, cabeceras fijas y saltos a un ancla.",
+    "Siete coreografías para cambiar de vista y elementos que vuelan de una vista a otra.",
+    "Componentes dentro de componentes: claves propias, bloques pulsables o desactivados, contenido en pestañas y tablas, estilo heredado.",
+];
+
 pub fn inicio(ui: &mut Ui, _s: &mut State) {
-    ui.title("Qué es");
-    ui.muted("Componentes donde cada cambio es una transición continua y la interfaz se adapta a quien la usa.");
-    ui.muted("Cada frame declaras lo que debe existir; morfo lleva cada elemento hasta ahí con muelles.");
+    ui.title("Qué es morfo");
+    ui.paragraph_muted(
+        "morfo es una librería de componentes para interfaces en Rust donde cada cambio es una transición continua y la interfaz se adapta a quien la usa. Dos personas que ejecutan el mismo programa pueden acabar viendo interfaces distintas.",
+    );
+    ui.space(4.0);
+    ui.grid(2, |ui| {
+        let ideas = [
+            (
+                "Movimiento sin código",
+                "Reordenar, redimensionar, cambiar de variante o de tema es siempre una transición. No hay código de animación que escribir.",
+            ),
+            ("Adaptación por uso", "La interfaz aprende qué usa cada persona y reordena y agranda lo que más usa."),
+            ("Coste cero en reposo", "Si nada se mueve, frame.animating es false y el programa duerme hasta el próximo evento."),
+            ("Tres renderizadores", "El núcleo no depende de nada. Pinta por CPU, GPU o en el navegador, según el backend que elijas."),
+        ];
+        for (i, (titulo, texto)) in ideas.into_iter().enumerate() {
+            ui.card(&format!("idea-{i}"), |ui| {
+                ui.label(titulo);
+                ui.paragraph_muted(texto);
+            });
+        }
+    });
+
+    ui.space(8.0);
+    ui.title("Tres ideas que lo sostienen");
+    ui.paragraph_muted("Todo lo demás de la librería se apoya en estas tres.");
+    ui.card("ideas", |ui| {
+        ui.label("1 · Identidad: una clave, un elemento");
+        ui.paragraph_muted(
+            "Cada elemento se reconoce por su clave (\"guardar\"). Si en el siguiente frame la misma clave aparece en otro sitio, con otra forma o con otro texto, el elemento no se recrea: viaja hasta allí. Por eso reordenar o transformar no necesita código extra.",
+        );
+        ui.separator();
+        ui.label("2 · Muelles: el layout solo fija destinos");
+        ui.paragraph_muted(
+            "El layout calcula dónde debe estar cada cosa. Un muelle analítico (la solución cerrada del muelle amortiguado) lleva posición, tamaño, color y tipografía hasta ahí. Es exacto a cualquier frecuencia de refresco y se puede interrumpir a mitad de camino conservando la velocidad.",
+        );
+        ui.separator();
+        ui.label("3 · Perfil: el uso decide el orden");
+        ui.paragraph_muted(
+            "El perfil guarda una puntuación por elemento que decae con el tiempo. De ella salen el orden, el peso visual y, si se activa, la densidad. Tiene histéresis para que nada baile, y no se mueve nada mientras el puntero está encima.",
+        );
+    });
+
+    ui.space(8.0);
+    ui.title("El ciclo de un frame");
+    ui.paragraph_muted("La aplicación no guarda una copia de la interfaz. Cada frame declara lo que debe existir, y morfo se encarga del resto.");
+    ui.card("ciclo", |ui| {
+        let pasos = [
+            ("ui.begin(tiempo, tamaño)", "Empieza el frame: avanza los muelles según el tiempo transcurrido y fija el área disponible."),
+            (
+                "Declarar",
+                "Cada llamada (button, card, text_field…) describe un elemento y devuelve una Response: clicked, hovered, held y su rectángulo.",
+            ),
+            ("ui.end()", "Resuelve el foco y la entrada, y devuelve un Frame con animating y wake_in."),
+            ("Pintar", "El backend dibuja ui.draw_list(). El de GPU omite los frames idénticos al anterior."),
+            ("Dormir o repetir", "Si animating es true se pide otro frame; si no, el programa espera a la siguiente entrada o a wake_in."),
+        ];
+        for (i, (paso, texto)) in pasos.into_iter().enumerate() {
+            ui.label(&format!("{}. {paso}", i + 1));
+            ui.paragraph_muted(texto);
+        }
+    });
+
+    ui.space(8.0);
+    ui.title("Un programa mínimo");
+    ui.paragraph_muted(
+        "Así es el esqueleto de cualquier aplicación hecha con morfo: un Ui, un frame por vuelta y la entrada que llega entre frames.",
+    );
     ui.code(&[
-        "let mut ui = Ui::new(Theme::dark());",
+        "use morfo::{Theme, Ui, Vec2};",
         "",
-        "// cada frame",
-        "ui.begin(segundos, Vec2::new(ancho, alto));",
+        "let mut ui = Ui::new(Theme::dark());",
+        "let mut guardado = 0;",
+        "",
+        "// cada frame, con el tiempo en segundos y el tamaño en píxeles lógicos",
+        "ui.begin(ahora(), Vec2::new(ancho, alto));",
         "ui.heading(\"Hola\");",
-        "if ui.button(\"guardar\", \"Guardar\").clicked { guardar(); }",
+        "if ui.button(\"guardar\", \"Guardar\").clicked { guardado += 1; }",
+        "ui.muted(&format!(\"Guardado {guardado} veces\"));",
         "let frame = ui.end();",
         "",
-        "renderer.render(ui.draw_list(), &mut pixmap, escala, ui.background());",
-        "if frame.animating { pedir_otro_frame(); }",
+        "pintar(ui.draw_list(), ui.background());",
+        "if frame.animating { pedir_frame(); }",
         "else if let Some(s) = frame.wake_in { despertar_en(s); }",
+        "",
+        "// la entrada llega entre frames:",
+        "ui.pointer_moved(posicion); ui.pointer_pressed(); ui.pointer_released();",
     ]);
+
+    ui.space(8.0);
     ui.title("Cuatro reglas");
-    ui.muted("1. La clave de un elemento (\"guardar\") es su identidad: si cambia de sitio o de forma, hace morph.");
-    ui.muted("2. Si frame.animating es false no hay nada que dibujar: el programa duerme hasta el próximo evento.");
-    ui.muted("3. frame.wake_in avisa de cuándo hará falta un frame sin que haya entrada (un aviso que caduca, el cursor).");
-    ui.muted("4. La entrada se pasa con pointer_moved/pressed/released, scroll_wheel, key_pressed y text_input.");
+    ui.card("reglas", |ui| {
+        ui.label("1 · La clave es la identidad");
+        ui.paragraph_muted(
+            "\"guardar\" identifica al elemento a lo largo de los frames, y también en el perfil guardado entre sesiones. Cámbiala y el elemento pasa a ser otro; cámbiala de sitio y viaja hasta allí. Lo que hay dentro de una tarjeta, un diálogo o cualquier contenedor con clave vive bajo la suya, así que se puede repetir sin choques; para repetir un grupo sin contenedor, ui.scope(clave, …).",
+        );
+        ui.separator();
+        ui.label("2 · Si animating es false, no hay nada que hacer");
+        ui.paragraph_muted("El programa puede dormir hasta el próximo evento. Es lo que hace que una interfaz en reposo cueste cero.");
+        ui.separator();
+        ui.label("3 · wake_in es el despertador");
+        ui.paragraph_muted(
+            "Un aviso que caduca, un cursor de texto que parpadea o una tooltip que aparece necesitan un frame aunque nadie toque nada. wake_in dice en cuántos segundos.",
+        );
+        ui.separator();
+        ui.label("4 · La entrada se pasa tal cual llega");
+        ui.paragraph_muted(
+            "pointer_moved, pointer_pressed, pointer_released, scroll_wheel, key_pressed, text_input, paste e ime_preedit. morfo decide qué significa cada una según lo que haya bajo el puntero o el foco.",
+        );
+    });
+
+    ui.space(8.0);
+    ui.title("Mapa del curso");
+    ui.paragraph_muted(
+        "Cada página explica un grupo de componentes, lo muestra funcionando y enseña el código que lo produce. El temario está en el borde izquierdo: lleva el cursor allí para desplegarlo.",
+    );
+    for (m, (modulo, paginas)) in COURSE.iter().enumerate() {
+        ui.card(&format!("modulo-{m}"), |ui| {
+            ui.label(&format!("Módulo {} · {modulo}", m + 1));
+            for &p in paginas.iter() {
+                ui.paragraph(&format!("Lección {} · {}", lesson_of(p) + 1, PAGES[p]));
+                ui.paragraph_muted(DESCRIPCIONES[p]);
+            }
+        });
+    }
+
+    ui.space(8.0);
+    ui.title("Empezar en tu proyecto");
+    ui.card("empezar", |ui| {
+        ui.label("1 · Añade la librería");
+        ui.code(&["[dependencies]", "morfo = { package = \"morfo-ui\", version = \"0.1\" }"]);
+        ui.label("2 · Elige un backend para pintar");
+        ui.paragraph_muted("morfo-skia pinta por CPU sin necesitar GPU; morfo-wgpu lo hace con la GPU; morfo-web lo lleva al navegador.");
+        ui.label("3 · Mira la demo, que se recarga sola");
+        ui.paragraph_muted(
+            "Esta documentación es una aplicación hecha con morfo. Con cargo run -p morfo-demo --bin docs, guardar un fichero la recarga en unos segundos, conservando la página y el estado. Su código, demo/src/pages.rs, es el ejemplo más completo.",
+        );
+    });
+
+    ui.space(8.0);
+    ui.title("Lo que todavía no hace");
+    ui.card("limites", |ui| {
+        ui.paragraph_muted("Una fuente normal y una monoespaciada: sin negritas, cursivas ni texto bidireccional (árabe, hebreo).");
+        ui.paragraph_muted("La tabla dibuja todas sus filas: para miles de filas hace falta paginarla.");
+        ui.paragraph_muted("El scroll es vertical y con rueda. Dibuja solo lo visible, pero recorre el layout de todo el contenido.");
+        ui.paragraph_muted("La recarga en vivo relanza el programa entero y solo funciona en Unix.");
+    });
 }
 
 pub fn botones(ui: &mut Ui, s: &mut State) {
@@ -850,5 +998,934 @@ pub fn datos(ui: &mut Ui, s: &mut State) {
         "    // orden: Option<(columna, descendente)>; las columnas numéricas se ordenan como números",
         "}",
         "ui.reorderable(\"tareas\", &mut tareas, |t| t.as_str());   // el texto es la identidad",
+    ]);
+}
+
+// ----- Gráficos ---------------------------------------------------------------
+
+const MESES: [&str; 6] = ["Jun", "Jul", "Ago", "Sep", "Oct", "Nov"];
+const VENTAS: [[f32; 6]; 2] = [[120.0, 95.0, 140.0, 180.0, 160.0, 210.0], [80.0, 110.0, 90.0, 130.0, 170.0, 150.0]];
+const DIAS: [&str; 7] = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const VISITAS: [[f32; 7]; 2] = [[320.0, 410.0, 380.0, 450.0, 520.0, 610.0, 580.0], [280.0, 300.0, 350.0, 330.0, 400.0, 420.0, 390.0]];
+const REGISTROS: [[f32; 7]; 2] = [[40.0, 52.0, 48.0, 61.0, 70.0, 95.0, 88.0], [30.0, 34.0, 41.0, 38.0, 45.0, 50.0, 47.0]];
+const TENDENCIAS: [(&str, [f32; 8], &str); 3] = [
+    ("Ingresos", [12.0, 14.0, 13.0, 17.0, 16.0, 19.0, 21.0, 24.0], "+18 %"),
+    ("Gastos", [9.0, 8.5, 9.4, 8.8, 8.1, 8.3, 7.9, 7.6], "-4 %"),
+    ("Devoluciones", [3.0, 3.2, 2.8, 3.9, 4.4, 4.1, 4.8, 5.2], "+9 %"),
+];
+const HORAS: [&str; 8] = ["0h", "3h", "6h", "9h", "12h", "15h", "18h", "21h"];
+
+/// Uso por día y hora, inventado pero con forma creíble: más entre semana y
+/// en horario de trabajo.
+fn uso_semanal() -> Vec<f32> {
+    let hora = [0.1, 0.05, 0.3, 1.0, 0.85, 0.9, 0.6, 0.35];
+    (0..7).flat_map(|d| (0..8).map(move |h| hora[h] * if d >= 5 { 0.45 } else { 1.0 } * (0.8 + ((d * 8 + h) % 5) as f32 * 0.1) * 100.0)).collect()
+}
+
+pub fn graficos(ui: &mut Ui, s: &mut State) {
+    ui.title("Gráficos");
+    ui.muted("Cada valor y la propia escala son muelles: con datos nuevos, el gráfico viaja hasta ellos en lugar de redibujarse.");
+    let set = s.chart_set.min(1);
+    ui.card("card-barras", |ui| {
+        ui.row(|ui| {
+            ui.label("Ventas por mes");
+            ui.fill();
+            ui.segmented("serie", &["Este año", "El anterior"], &mut s.chart_set);
+        });
+        let ancho = ui.available_width();
+        if let Some(i) = ui.bar_chart("barras", &MESES, &VENTAS[set], Vec2::new(ancho, 200.0)) {
+            ui.toast(&format!("{}: {} ventas", MESES[i], VENTAS[set][i]));
+        }
+        ui.separator();
+        ui.label("Visitas y registros por día");
+        ui.line_chart("lineas", &DIAS, &[("Visitas", &VISITAS[set]), ("Registros", &REGISTROS[set])], Vec2::new(ancho, 220.0));
+        ui.muted("Cambia de año arriba: barras y líneas viajan a los valores nuevos. Pasa el ratón para ver cada valor.");
+    });
+    ui.code(&[
+        "// Las barras se identifican por su etiqueta: reordenar los datos las mueve.",
+        "if let Some(i) = ui.bar_chart(\"ventas\", &meses, &valores, Vec2::new(600.0, 200.0)) {",
+        "    abrir_detalle(i);",
+        "}",
+        "ui.line_chart(\"visitas\", &dias, &[(\"Visitas\", &v), (\"Registros\", &r)], tam);",
+    ]);
+    ui.space(8.0);
+    ui.title("Tendencias, calor y medidores");
+    ui.card("card-mini", |ui| {
+        ui.label("sparkline: la tendencia dentro de una fila");
+        for (nombre, valores, cambio) in TENDENCIAS {
+            ui.row(|ui| {
+                ui.space(4.0);
+                ui.label(nombre);
+                ui.fill();
+                ui.sparkline(&valores, 140.0);
+                ui.muted(cambio);
+            });
+        }
+        ui.separator();
+        ui.label("heatmap: uso por día de la semana y hora");
+        if let Some((d, h)) = ui.heatmap("calor", &DIAS, &HORAS, &uso_semanal()) {
+            ui.toast(&format!("{} a las {}", DIAS[d], HORAS[h]));
+        }
+        ui.separator();
+        ui.row(|ui| {
+            ui.column(|ui| {
+                ui.label("gauge: un valor entre 0 y 1");
+                ui.muted("Ámbar al acercarse al límite, rojo al llegar.");
+                ui.slider("nivel-medidor", &mut s.gauge_level, 220.0);
+            });
+            ui.fill();
+            ui.gauge("cpu", "Uso de CPU", s.gauge_level, 180.0);
+        });
+    });
+    ui.code(&[
+        "ui.sparkline(&ultimos_dias, 140.0);                 // verde si sube, rojo si baja",
+        "ui.heatmap(\"uso\", &dias, &horas, &valores);         // valores fila a fila",
+        "ui.gauge(\"cpu\", \"Uso de CPU\", 0.72, 180.0);",
+    ]);
+}
+
+// ----- Navegación -------------------------------------------------------------
+
+const ARCHIVOS: [(u8, &str); 10] = [
+    (0, "proyecto"),
+    (1, "src"),
+    (2, "main.rs"),
+    (2, "ui"),
+    (3, "botones.rs"),
+    (3, "tablas.rs"),
+    (1, "docs"),
+    (2, "guia.md"),
+    (1, "Cargo.toml"),
+    (0, "notas.txt"),
+];
+
+/// Los índices de `ARCHIVOS` desde la raíz hasta `i`, ambos incluidos.
+fn ruta(i: usize) -> Vec<usize> {
+    let mut out = vec![i];
+    let mut depth = ARCHIVOS[i].0;
+    for j in (0..i).rev() {
+        if ARCHIVOS[j].0 < depth {
+            out.push(j);
+            depth = ARCHIVOS[j].0;
+        }
+    }
+    out.reverse();
+    out
+}
+
+pub fn navegacion(ui: &mut Ui, s: &mut State) {
+    ui.title("Navegación");
+    ui.muted("Pestañas, migas de pan, un árbol, un paginador y un panel lateral. Todo lo que cambia de sitio viaja.");
+    ui.card("card-pestanas", |ui| {
+        ui.tabs("pestanas", &["Resumen", "Actividad", "Ajustes"], &mut s.nav_tab);
+        let tab = s.nav_tab;
+        ui.morph("contenido-pestana", tab, |ui| match tab {
+            0 => {
+                ui.label("Resumen del proyecto");
+                ui.paragraph_muted(
+                    "La línea de debajo de las pestañas salta con un pequeño rebote, y el contenido se transforma en el de la pestaña nueva.",
+                );
+            }
+            1 => {
+                for (i, linea) in ["Ana ha comentado el informe", "Se ha publicado la versión 0.2", "Luis se ha unido al equipo"].iter().enumerate()
+                {
+                    ui.scope(&format!("act-{i}"), |ui| {
+                        ui.row(|ui| {
+                            ui.badge("punto", 1);
+                            ui.label(linea);
+                        });
+                    });
+                }
+            }
+            _ => {
+                ui.row(|ui| {
+                    ui.toggle("notif", &mut s.news);
+                    ui.label("Notificaciones");
+                });
+                ui.row(|ui| {
+                    ui.toggle("auto", &mut s.autosave);
+                    ui.label("Guardar automáticamente");
+                });
+            }
+        });
+    });
+    ui.code(&[
+        "ui.tabs(\"pestanas\", &[\"Resumen\", \"Actividad\", \"Ajustes\"], &mut pestana);",
+        "ui.morph(\"contenido\", pestana, |ui| match pestana { /* cada pestaña */ });",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Árbol y migas de pan");
+    ui.card("card-arbol", |ui| {
+        ui.columns(&[1.0, 1.3], |ui, col| {
+            if col == 0 {
+                ui.tree("archivos", &ARCHIVOS, &mut s.tree_sel);
+            } else {
+                let elegido = s.tree_sel.unwrap_or(0).min(ARCHIVOS.len() - 1);
+                let indices = ruta(elegido);
+                let nombres: Vec<&str> = indices.iter().map(|&i| ARCHIVOS[i].1).collect();
+                if let Some(k) = ui.breadcrumbs("migas", &nombres) {
+                    s.tree_sel = Some(indices[k]);
+                }
+                ui.paragraph_muted("Las migas siguen al árbol. Pulsa una para subir; si la ruta no cabe, su centro se pliega en «…».");
+                ui.muted("Con el foco en una rama, la flecha derecha la abre y la izquierda la cierra.");
+            }
+        });
+    });
+    ui.code(&[
+        "// (profundidad, nombre) en orden de lectura; el árbol recuerda qué ramas están abiertas.",
+        "ui.tree(\"archivos\", &[(0, \"src\"), (1, \"main.rs\"), (0, \"Cargo.toml\")], &mut elegido);",
+        "if let Some(i) = ui.breadcrumbs(\"ruta\", &[\"proyecto\", \"src\", \"main.rs\"]) { subir_a(i); }",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Paginador y panel lateral");
+    ui.card("card-paginas", |ui| {
+        let paginas = 24;
+        ui.row(|ui| {
+            ui.pagination("paginador", paginas, &mut s.page_no);
+            ui.fill();
+            ui.muted(&format!("Página {} de {paginas}", s.page_no + 1));
+        });
+        let base = s.page_no * 3;
+        ui.morph("resultados", s.page_no, |ui| {
+            for i in 0..3 {
+                ui.label(&format!("Resultado {}", base + i + 1));
+            }
+        });
+        ui.separator();
+        ui.row(|ui| {
+            if ui.button_icon("abrir-cajon", Icon::Menu, "Abrir panel lateral", Variant::Soft, Size::Md).clicked {
+                s.drawer = true;
+            }
+            ui.muted("Entra por la derecha; se cierra con la ×, Escape o un clic fuera.");
+        });
+    });
+    ui.drawer("cajon", "Ajustes rápidos", Side::Right, &mut s.drawer, 340.0, |ui| {
+        ui.row(|ui| {
+            ui.toggle("noticias", &mut s.news);
+            ui.label("Recibir novedades");
+        });
+        ui.row(|ui| {
+            ui.toggle("guardar", &mut s.autosave);
+            ui.label("Guardar automáticamente");
+        });
+        ui.label("Volumen");
+        ui.slider("volumen", &mut s.volume, 280.0);
+        ui.paragraph_muted("Lo que se declara dentro del cajón es una interfaz como cualquier otra.");
+    });
+    ui.code(&[
+        "ui.pagination(\"paginas\", 24, &mut pagina);           // pagina empieza en 0",
+        "ui.drawer(\"ajustes\", \"Ajustes\", Side::Right, &mut abierto, 340.0, |ui| {",
+        "    ui.toggle(\"noticias\", &mut noticias);",
+        "});",
+    ]);
+}
+
+// ----- Formularios ------------------------------------------------------------
+
+const DIAS_LARGOS: [&str; 7] = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
+const LENGUAJES: [&str; 8] = ["Rust", "Go", "Python", "TypeScript", "Kotlin", "Swift", "C++", "Zig"];
+
+pub fn formularios(ui: &mut Ui, s: &mut State) {
+    ui.title("Formularios");
+    ui.muted("Fechas, colores, etiquetas, varias opciones a la vez y atajos de teclado.");
+    ui.card("card-fecha", |ui| {
+        ui.row(|ui| {
+            ui.label("Fecha de entrega");
+            ui.date_picker("fecha", &mut s.date);
+            ui.muted(&format!("Cae en {}.", DIAS_LARGOS[s.date.weekday() as usize]));
+        });
+        ui.muted("Ábrelo: las flechas cambian de mes y los días se deslizan. Con el campo enfocado, las flechas mueven un día o una semana.");
+        ui.separator();
+        ui.row_top(|ui| {
+            ui.color_picker("color", &mut s.color, 260.0);
+            ui.column(|ui| {
+                ui.label("Selector de color");
+                ui.paragraph_muted("Saturación y brillo en el cuadrado, tono en la barra. Recuerda el tono aunque llegues al negro.");
+                if ui.button_with("acento", "Probar como acento", Variant::Soft, Size::Md).clicked {
+                    ui.set_theme(crate::theme_of(s).with_accent(s.color));
+                }
+            });
+        });
+    });
+    ui.code(&[
+        "ui.date_picker(\"entrega\", &mut fecha);             // morfo::Date",
+        "ui.color_picker(\"color\", &mut color, 260.0);        // morfo::Color",
+    ]);
+    ui.space(8.0);
+    ui.title("Etiquetas, opciones y atajos");
+    ui.card("card-etiquetas", |ui| {
+        let ancho = ui.available_width().min(520.0);
+        ui.label("Etiquetas");
+        ui.tag_input("etiquetas", &mut s.labels, "Escribe y pulsa Intro o coma", ancho);
+        ui.muted("Cada etiqueta sale volando del campo. Retroceso con el campo vacío quita la última.");
+        ui.separator();
+        ui.label("Lenguajes que usas");
+        ui.multi_select("lenguajes", &LENGUAJES, &mut s.langs, "Elige uno o varios", ancho);
+        ui.muted("La lista no se cierra al elegir; escribe para filtrar (sin importar tildes).");
+        ui.separator();
+        ui.row(|ui| {
+            ui.label("Atajo para buscar");
+            ui.shortcut_input("atajo", &mut s.shortcut, 260.0);
+        });
+        ui.muted("Púlsalo y haz la combinación. Retroceso lo borra, Escape lo deja como estaba.");
+    });
+    ui.code(&[
+        "ui.tag_input(\"etiquetas\", &mut etiquetas, \"Añade etiquetas\", 520.0);",
+        "ui.multi_select(\"lenguajes\", &opciones, &mut elegidas, \"Elige\", 520.0);",
+        "ui.shortcut_input(\"atajo\", &mut atajo, 260.0);         // Option<Shortcut>",
+        "// El programa pasa Ctrl+tecla con ui.chord(tecla) mientras ui.wants_keys().",
+    ]);
+}
+
+// ----- Estado y paneles -------------------------------------------------------
+
+const PASOS: [&str; 4] = ["Cuenta", "Datos", "Pago", "Listo"];
+
+pub fn estado(ui: &mut Ui, s: &mut State) {
+    ui.title("Estado y paneles");
+    ui.muted("Contenido que carga, avisos con número, procesos por pasos y espacio que se reparte arrastrando.");
+    let cargando = ui.now() < s.load_until;
+    ui.card("card-carga", |ui| {
+        ui.row(|ui| {
+            ui.label("Esqueleto mientras carga");
+            ui.fill();
+            if ui.button_with("recargar", "Recargar", Variant::Soft, Size::Sm).clicked {
+                s.load_until = ui.now() + 2.0;
+            }
+        });
+        ui.skeleton("perfil", cargando, 4, |ui| {
+            ui.title("Ada Lovelace");
+            ui.paragraph_muted("Escribió el primer algoritmo pensado para una máquina. Este texto ocupa el sitio que tenían las líneas grises, y llega transformándose desde ellas.");
+        });
+        ui.separator();
+        ui.row(|ui| {
+            ui.icon_button("buzon", Icon::Download, Variant::Soft, Size::Md);
+            ui.badge_on("buzon", s.inbox);
+            ui.label("Sin leer");
+            ui.badge("sin-leer", s.inbox);
+            ui.fill();
+            if ui.button_with("llega", "Llega uno", Variant::Ghost, Size::Sm).clicked {
+                s.inbox += 1;
+            }
+            if ui.button_with("leer", "Leer todo", Variant::Ghost, Size::Sm).clicked {
+                s.inbox = 0;
+            }
+        });
+    });
+    ui.code(&[
+        "ui.skeleton(\"perfil\", cargando, 4, |ui| { /* el contenido real */ });",
+        "ui.icon_button(\"buzon\", Icon::Download, Variant::Soft, Size::Md);",
+        "ui.badge_on(\"buzon\", sin_leer);                       // salta al cambiar, se va en 0",
+    ]);
+    ui.space(8.0);
+    ui.title("Pasos");
+    ui.card("card-pasos", |ui| {
+        ui.steps("pasos", &PASOS, &mut s.step);
+        let paso = s.step;
+        ui.morph("paso", paso, |ui| {
+            ui.label(&format!("Paso {}: {}", paso + 1, PASOS[paso]));
+            ui.paragraph_muted(match paso {
+                0 => "Crea tu cuenta. Los pasos ya hechos se marcan y se pueden pulsar para volver.",
+                1 => "Tus datos. La línea se llena hasta el paso actual.",
+                2 => "El pago. El contenido de cada paso se transforma en el del siguiente.",
+                _ => "Todo listo.",
+            });
+        });
+        ui.row(|ui| {
+            if s.step > 0 && ui.button_icon("atras", Icon::ArrowLeft, "Atrás", Variant::Ghost, Size::Md).clicked {
+                s.step -= 1;
+            }
+            ui.fill();
+            if s.step + 1 < PASOS.len() && ui.button_icon("adelante", Icon::ArrowRight, "Siguiente", Variant::Solid, Size::Md).clicked {
+                s.step += 1;
+            }
+        });
+    });
+    ui.code(&["ui.steps(\"alta\", &[\"Cuenta\", \"Datos\", \"Pago\", \"Listo\"], &mut paso);"]);
+    ui.space(8.0);
+    ui.title("Divisor y tablero");
+    ui.card("card-paneles", |ui| {
+        ui.splitter("divisor", &mut s.split, 170.0, |ui, i| {
+            if i == 0 {
+                ui.label("Notas");
+                ui.paragraph_muted("Arrastra la barra del medio: el texto se reajusta al ancho mientras se mueve. Con el foco en ella, las flechas también la mueven.");
+            } else {
+                ui.label("Vista previa");
+                for linea in ["Introducción", "Instalación", "Primeros pasos"] {
+                    ui.muted(linea);
+                }
+            }
+        });
+        ui.separator();
+        ui.muted("Arrastra las tarjetas de una columna a otra: las demás hacen sitio.");
+        ui.kanban("tablero", &["Por hacer", "En curso", "Hecho"], &mut s.board);
+    });
+    ui.code(&[
+        "ui.splitter(\"divisor\", &mut proporcion, 170.0, |ui, panel| { /* panel 0 o 1 */ });",
+        "ui.kanban(\"tablero\", &[\"Por hacer\", \"En curso\", \"Hecho\"], &mut columnas);",
+    ]);
+}
+
+// ----- Scroll ----------------------------------------------------------------
+
+const REVEALS: [&str; 6] = ["Fade", "Rise", "Left", "Right", "Grow", "Wipe"];
+
+/// Las tarjetas que entran al hacer scroll: un nombre y su color.
+const TARJETAS: [(&str, u32); 15] = [
+    ("Coral", 0xff7a59),
+    ("Lavanda", 0x9b8cff),
+    ("Menta", 0x3ccf9e),
+    ("Ámbar", 0xf5b83d),
+    ("Cielo", 0x4aa8ff),
+    ("Ciruela", 0x8e4585),
+    ("Lima", 0x9ccc3d),
+    ("Arena", 0xd9b382),
+    ("Pizarra", 0x64748b),
+    ("Rubí", 0xe5484d),
+    ("Turquesa", 0x22c3c3),
+    ("Miel", 0xe8a33d),
+    ("Musgo", 0x6b8e4e),
+    ("Índigo", 0x5b5bd6),
+    ("Salmón", 0xf59a8b),
+];
+
+const AGENDA: [(&str, &[&str]); 5] = [
+    ("A", &["Ana", "Alberto", "Alicia", "Andrés", "Aurora", "Antonio"]),
+    ("B", &["Beatriz", "Bruno", "Blanca", "Borja", "Belén"]),
+    ("C", &["Carmen", "Carlos", "Clara", "Cristina", "César", "Celia"]),
+    ("D", &["Daniel", "Diana", "David", "Dolores", "Darío"]),
+    ("E", &["Elena", "Emilio", "Eva", "Esteban", "Eugenia"]),
+];
+
+const CIUDADES_AGENDA: [&str; 6] = ["Madrid", "Lugo", "Cádiz", "Soria", "Teruel", "Ávila"];
+
+/// Un degradado vertical de `top` a `bottom`, en franjas de unos 4 px que
+/// se tocan sin solaparse (solapadas, al desvanecerse se verían rayas).
+fn gradient(list: &mut DrawList, r: Rect, top: Color, bottom: Color) {
+    let strips = ((r.h / 4.0) as usize).clamp(8, 160);
+    let h = r.h / strips as f32;
+    for i in 0..strips {
+        let (y, next) = ((r.y + h * i as f32).round(), (r.y + h * (i + 1) as f32).round());
+        list.rect(Rect::new(r.x, y, r.w, next - y), 0.0, top.mix(bottom, i as f32 / (strips - 1) as f32));
+    }
+}
+
+/// Una línea de colinas que ondula a lo ancho de `r`, de `base` hacia abajo.
+fn hills(list: &mut DrawList, r: Rect, base: f32, height: f32, waves: f32, phase: f32, color: Color) {
+    let mut pts = vec![Vec2::new(r.x, r.bottom())];
+    for i in 0..=48 {
+        let t = i as f32 / 48.0;
+        let y = base - height * (0.55 + 0.45 * (t * waves * TAU + phase).sin() * (t * 2.3 + phase).cos());
+        pts.push(Vec2::new(r.x + r.w * t, y));
+    }
+    pts.push(Vec2::new(r.right(), r.bottom()));
+    list.polygon(&pts, color);
+}
+
+pub fn scroll(ui: &mut Ui, s: &mut State) {
+    ui.title("Animaciones de scroll");
+    ui.paragraph_muted(
+        "Movimiento que depende de dónde está el scroll: lo que entra al verse, números que cuentan, paralaje, cabeceras fijas y viajes a un ancla.",
+    );
+
+    ui.scroll_reveal("sec-aparecer", Reveal::Rise, |ui| {
+        ui.card("card-aparecer", |ui| {
+            ui.row(|ui| {
+                ui.label("Aparecer al entrar en pantalla");
+                ui.fill();
+                if ui.button_with("repetir", "Repetir", Variant::Ghost, Size::Sm).clicked {
+                    s.reveal_round += 1;
+                }
+            });
+            ui.segmented("estilo-aparecer", &REVEALS, &mut s.reveal_style);
+            ui.paragraph_muted(
+                "Haz scroll dentro del recuadro: cada tarjeta entra la primera vez que se ve, y las que llegan a la vez lo hacen una detrás de otra.",
+            );
+            let (style, round) = (Reveal::ALL[s.reveal_style], s.reveal_round);
+            ui.scroll("lista-aparecer", 280.0, |ui| {
+                ui.grid(3, |ui| {
+                    for (i, (nombre, color)) in TARJETAS.into_iter().enumerate() {
+                        ui.scroll_reveal(&format!("tarjeta-{round}-{}-{i}", s.reveal_style), style, |ui| {
+                            ui.card(&format!("tarjeta-{i}"), |ui| {
+                                let w = ui.available_width();
+                                ui.canvas(&format!("muestra-{i}"), Vec2::new(w, 46.0), |list, r| {
+                                    list.rect(r, 10.0, Color::hex(color));
+                                });
+                                ui.label(nombre);
+                                ui.muted(&format!("#{color:06x}"));
+                            });
+                        });
+                    }
+                });
+            });
+        });
+    });
+    ui.code(&[
+        "ui.scroll_reveal(\"tarjeta-3\", Reveal::Rise, |ui| { /* el contenido */ });",
+        "// las que entran a la vez lo hacen una detrás de otra; el layout no se mueve",
+    ]);
+
+    ui.space(8.0);
+    ui.scroll_reveal("sec-contadores", Reveal::Rise, |ui| {
+        ui.card("card-contadores", |ui| {
+            ui.label("Números que cuentan al verse");
+            ui.paragraph_muted("Empiezan en cero la primera vez que aparecen y luego se deslizan a cualquier valor nuevo.");
+            let cifras: [(f32, usize, &str); 3] = [(12480.0, 0, "descargas este mes"), (98.6, 1, "% del tiempo en reposo"), (4.2, 1, "ms por frame")];
+            ui.columns(&[1.0, 1.0, 1.0], |ui, i| {
+                let (valor, decimales, texto) = cifras[i];
+                ui.count_up(&format!("cifra-{i}"), valor, decimales, 34.0);
+                ui.muted(texto);
+            });
+        });
+    });
+    ui.code(&["ui.count_up(\"descargas\", 12480.0, 0, 34.0);   // decimales: 0, tamaño: 34"]);
+
+    ui.space(8.0);
+    ui.scroll_reveal("sec-paralaje", Reveal::Rise, |ui| {
+        ui.label("Paralaje");
+        ui.paragraph_muted("Haz scroll en la página: cada capa del paisaje se mueve a una velocidad, y las del fondo se quedan atrás.");
+        let alto = 230.0;
+        ui.parallax("paisaje", alto, &[0.4, 0.26, 0.14, 0.0], |ui, capa| {
+            let w = ui.available_width();
+            match capa {
+                0 => ui.canvas("cielo", Vec2::new(w, alto + 420.0), |list, r| {
+                    gradient(list, r, Color::hex(0x1b2350), Color::hex(0xf39a63));
+                    let sol = Vec2::new(r.x + r.w * 0.68, r.center().y + 40.0);
+                    list.rect(Rect::new(sol.x - 70.0, sol.y - 70.0, 140.0, 140.0), 70.0, Color::hex(0xffcf7d).with_alpha(0.18));
+                    list.rect(Rect::new(sol.x - 38.0, sol.y - 38.0, 76.0, 76.0), 38.0, Color::hex(0xffd98a));
+                }),
+                1 => ui.canvas("montanas", Vec2::new(w, alto + 280.0), |list, r| {
+                    hills(list, r, r.center().y + 70.0, 120.0, 1.6, 0.4, Color::hex(0x6a4f8f));
+                }),
+                2 => ui.canvas("colinas", Vec2::new(w, alto + 150.0), |list, r| {
+                    hills(list, r, r.center().y + 95.0, 70.0, 2.4, 2.0, Color::hex(0x3d2f63));
+                }),
+                _ => ui.canvas("frente", Vec2::new(w, alto), |list, r| {
+                    hills(list, r, r.bottom() + 6.0, 46.0, 3.1, 4.0, Color::hex(0x1f1838));
+                }),
+            }
+        });
+    });
+    ui.code(&[
+        "// capas de atrás hacia delante: 0,4 va a menos de la mitad de velocidad, 0 va con la página",
+        "ui.parallax(\"paisaje\", 230.0, &[0.4, 0.26, 0.14, 0.0], |ui, capa| { /* dibuja la capa */ });",
+    ]);
+
+    ui.space(8.0);
+    ui.scroll_reveal("sec-agenda", Reveal::Rise, |ui| {
+        ui.card("card-agenda", |ui| {
+            ui.label("Cabeceras fijas, progreso y saltos a un ancla");
+            ui.paragraph_muted("La letra se queda arriba mientras pasan sus nombres, hasta que la siguiente la empuja. Los botones viajan a una sección, y la barra de arriba dice cuánto llevas.");
+            ui.row(|ui| {
+                for (letra, _) in AGENDA {
+                    if ui.button_with(&format!("ir-{letra}"), &format!("Ir a {letra}"), Variant::Soft, Size::Sm).clicked {
+                        ui.scroll_to(&format!("letra-{letra}"));
+                    }
+                }
+            });
+            ui.scroll("agenda", 300.0, |ui| {
+                ui.sticky_section(
+                    "agenda-entera",
+                    |ui| {
+                        let p = ui.scroll_progress();
+                        ui.row(|ui| {
+                            ui.label("Agenda");
+                            ui.fill();
+                            ui.muted(&format!("{:.0} %", p * 100.0));
+                            ui.progress(p, 140.0);
+                        });
+                    },
+                    |ui| {
+                        for (letra, nombres) in AGENDA {
+                            ui.sticky_section(
+                                &format!("letra-{letra}"),
+                                |ui| ui.title(letra),
+                                |ui| {
+                                    for (i, nombre) in nombres.iter().enumerate() {
+                                        ui.row(|ui| {
+                                            ui.label(nombre);
+                                            ui.fill();
+                                            ui.muted(CIUDADES_AGENDA[(i + nombre.len()) % CIUDADES_AGENDA.len()]);
+                                        });
+                                    }
+                                },
+                            );
+                        }
+                        if ui.scroll_linked(40.0, 120.0) > 0.5 && ui.button_icon("arriba", Icon::ArrowUp, "Volver arriba", Variant::Ghost, Size::Sm).clicked {
+                            ui.scroll_to("agenda-entera");
+                        }
+                    },
+                );
+            });
+            ui.paragraph_muted("Todas las áreas de scroll rebotan: sigue girando la rueda al llegar arriba o abajo y el contenido se estira un poco antes de volver.");
+        });
+    });
+    ui.code(&[
+        "ui.sticky_section(\"letra-B\", |ui| ui.title(\"B\"), |ui| { /* sus filas */ });",
+        "ui.scroll_to(\"letra-B\");                      // viaja hasta ella con un muelle",
+        "ui.progress(ui.scroll_progress(), 140.0);      // dentro del scroll: 0 arriba, 1 al final",
+        "ui.scroll_linked(40.0, 120.0)                  // 0 → 1 mientras se recorren esos píxeles",
+    ]);
+}
+
+// ----- Transiciones ----------------------------------------------------------
+
+const ESTILOS_TR: [&str; 7] = ["Fade", "Slide", "Shift", "Push", "Zoom", "Flip", "Rise"];
+
+const EXPLICA_TR: [&str; 7] = [
+    "Fade: la vista que se va se desvanece mientras llega la otra. Para cambios sin dirección.",
+    "Slide: las dos vistas recorren todo el ancho, como las páginas de un carrusel.",
+    "Shift: un desplazamiento corto con fundido, en la dirección del avance. Es la que usa esta documentación entre lecciones.",
+    "Push: la nueva vista entra por encima y la anterior retrocede oscureciéndose. Al volver, la de arriba se retira.",
+    "Zoom: hacia delante, la vieja crece y se desvanece mientras la nueva crece hasta su sitio. Hacia atrás, al revés.",
+    "Flip: una tarjeta que se da la vuelta. La vieja se pliega hasta su borde y la nueva se despliega desde él.",
+    "Rise: la vieja sube y se desvanece, la nueva sube desde abajo.",
+];
+
+/// Los pasos del asistente de ejemplo: título, texto y color.
+pub(crate) const PASOS_TR: [(&str, &str, u32); 4] = [
+    ("Bienvenida", "Un asistente de cuatro pasos. Avanza y retrocede para ver la coreografía en las dos direcciones.", 0x7c6cff),
+    ("Tu perfil", "Cada paso es una vista distinta: la región solo sabe qué número de vista toca ahora.", 0x22c3a6),
+    ("Preferencias", "La vista nueva funciona desde el primer frame; la que se va es solo una imagen de cómo estaba.", 0xff7a59),
+    ("Listo", "Volver al principio es ir hacia atrás: la transición se invierte sola.", 0xf5b83d),
+];
+
+/// Las fotos de la galería: nombre, texto, cielo arriba, horizonte, sol y colinas.
+pub(crate) const FOTOS: [(&str, &str, [u32; 5]); 6] = [
+    ("Amanecer", "Luz fría que se calienta por abajo.", [0x2b3a67, 0xf6b48f, 0xfff1c9, 0x7a6a9a, 0x463d6b]),
+    ("Mediodía", "Cielo limpio y colinas verdes.", [0x3b8fe0, 0xbfe3ff, 0xfffbe6, 0x5fa86b, 0x2f7a4d]),
+    ("Atardecer", "El sol bajo tiñe todo de naranja.", [0x1b2350, 0xf39a63, 0xffd98a, 0x6a4f8f, 0x3d2f63]),
+    ("Noche", "Una luna sobre montañas oscuras.", [0x070b1f, 0x1f2a55, 0xe8ecff, 0x262c52, 0x121531]),
+    ("Niebla", "Capas grises que se pierden a lo lejos.", [0x9aa3ad, 0xdfe3e6, 0xf7f7f2, 0x8b949e, 0x5f6872]),
+    ("Aurora", "Verdes y violetas sobre la nieve.", [0x0d1b2a, 0x3ddc97, 0xd6fff0, 0x6c5ce7, 0x2d3561]),
+];
+
+/// La foto `i`, pintada en `r`.
+fn foto(list: &mut DrawList, r: Rect, i: usize) {
+    let [cielo, horizonte, sol, lejos, cerca] = FOTOS[i].2.map(Color::hex);
+    list.push(morfo::DrawCmd::PushClip { rect: r, radius: 12.0 });
+    gradient(list, r, cielo, horizonte);
+    let d = r.h * 0.28;
+    let c = Vec2::new(r.x + r.w * (0.3 + 0.08 * i as f32), r.y + r.h * 0.38);
+    list.rect(Rect::new(c.x - d * 0.5, c.y - d * 0.5, d, d), d * 0.5, sol);
+    hills(list, r, r.y + r.h * 0.78, r.h * 0.32, 1.4, i as f32, lejos);
+    hills(list, r, r.y + r.h * 0.95, r.h * 0.22, 2.2, i as f32 * 1.7 + 1.0, cerca);
+    list.push(morfo::DrawCmd::PopClip);
+}
+
+pub fn transiciones(ui: &mut Ui, s: &mut State) {
+    ui.title("Transiciones");
+    ui.paragraph_muted(
+        "Cuando una zona cambia de vista, la que se va y la que llega se mueven juntas. Lo que las dos comparten vuela de un sitio a otro.",
+    );
+
+    ui.card("card-coreografias", |ui| {
+        ui.label("Siete coreografías");
+        ui.segmented("estilo-tr", &ESTILOS_TR, &mut s.tr_style);
+        ui.morph("explica-tr", s.tr_style, |ui| ui.paragraph_muted(EXPLICA_TR[s.tr_style]));
+        let paso = s.tr_step;
+        ui.transition("asistente", paso, Transition::ALL[s.tr_style], |ui| {
+            let (titulo, texto, color) = PASOS_TR[paso];
+            ui.card(&format!("paso-tr-{paso}"), |ui| {
+                ui.row(|ui| {
+                    ui.canvas(&format!("insignia-tr-{paso}"), Vec2::new(44.0, 44.0), |list, r| {
+                        list.rect(r, 22.0, Color::hex(color));
+                    });
+                    ui.column(|ui| {
+                        ui.muted(&format!("Paso {} de {}", paso + 1, PASOS_TR.len()));
+                        ui.title(titulo);
+                    });
+                });
+                ui.paragraph_muted(texto);
+            });
+        });
+        ui.row(|ui| {
+            if paso > 0 && ui.button_icon("tr-atras", Icon::ArrowLeft, "Atrás", Variant::Ghost, Size::Md).clicked {
+                s.tr_step -= 1;
+            }
+            ui.fill();
+            if paso + 1 < PASOS_TR.len() {
+                if ui.button_icon("tr-siguiente", Icon::ArrowRight, "Siguiente", Variant::Solid, Size::Md).clicked {
+                    s.tr_step += 1;
+                }
+            } else if ui.button_with("tr-otra-vez", "Empezar de nuevo", Variant::Soft, Size::Md).clicked {
+                s.tr_step = 0;
+            }
+        });
+    });
+    ui.code(&[
+        "ui.transition(\"asistente\", paso, Transition::Push, |ui| match paso {",
+        "    0 => bienvenida(ui),",
+        "    _ => perfil(ui),",
+        "});  // un número mayor es avanzar: entra por la derecha",
+    ]);
+
+    ui.space(8.0);
+    ui.card("card-galeria", |ui| {
+        ui.label("Un elemento que comparten dos vistas");
+        ui.paragraph_muted("Abre una foto: vuela desde la galería hasta la vista de detalle, y vuelve a su sitio al cerrarla.");
+        let vista = s.photo.map_or(0, |i| i + 1);
+        let photo = s.photo;
+        ui.transition("galeria", vista, Transition::Zoom, |ui| match photo {
+            None => ui.grid(3, |ui| {
+                for (i, (nombre, _, _)) in FOTOS.iter().enumerate() {
+                    ui.column(|ui| {
+                        let w = ui.available_width();
+                        ui.hero(&format!("foto-{i}"), |ui| {
+                            ui.canvas(&format!("mini-{i}"), Vec2::new(w, 96.0), |list, r| foto(list, r, i));
+                        });
+                        if ui.button_with(&format!("abrir-{i}"), nombre, Variant::Ghost, Size::Sm).clicked {
+                            s.photo = Some(i);
+                        }
+                    });
+                }
+            }),
+            Some(i) => {
+                let (nombre, texto, _) = FOTOS[i];
+                ui.row(|ui| {
+                    if ui.button_icon("cerrar-foto", Icon::ArrowLeft, "Galería", Variant::Ghost, Size::Sm).clicked {
+                        s.photo = None;
+                    }
+                    ui.fill();
+                    ui.muted(&format!("Foto {} de {}", i + 1, FOTOS.len()));
+                });
+                let w = ui.available_width();
+                ui.hero(&format!("foto-{i}"), |ui| {
+                    ui.canvas(&format!("grande-{i}"), Vec2::new(w, 250.0), |list, r| foto(list, r, i));
+                });
+                ui.title(nombre);
+                ui.paragraph_muted(texto);
+            }
+        });
+    });
+    ui.code(&[
+        "// en la galería y en el detalle, con la misma clave",
+        "ui.hero(\"foto-3\", |ui| ui.canvas(\"mini-3\", tamaño, pintar));",
+        "ui.hero(\"foto-3\", |ui| ui.canvas(\"grande-3\", tamaño_grande, pintar));",
+    ]);
+
+    ui.space(8.0);
+    ui.card("card-lecciones", |ui| {
+        ui.label("Entre lecciones");
+        ui.paragraph_muted(
+            "Esta documentación pone todas sus páginas dentro de una transición Shift, con el número de lección como vista: la siguiente lección llega desde la derecha y la anterior desde la izquierda. El scroll de cada página se conserva al volver a ella.",
+        );
+    });
+    ui.code(&["ui.transition(\"paginas\", leccion, Transition::Shift, |ui| pagina(ui, leccion));"]);
+}
+
+// ----- Composición -----------------------------------------------------------
+
+const PROYECTOS: [(&str, &str); 3] = [
+    ("Tienda en línea", "12 tareas abiertas · actualizado hoy"),
+    ("Aplicación de notas", "3 tareas abiertas · hace dos días"),
+    ("Web del estudio", "Terminado · el mes pasado"),
+];
+
+const EQUIPO: [&[&str]; 4] = [&["Ana", "Diseño", "80"], &["Bruno", "Código", "45"], &["Carmen", "Textos", "100"], &["David", "Pruebas", "20"]];
+
+const TEMAS: [(&str, &str, u32); 3] = [
+    ("Primeros pasos", "Instalar, el primer frame y la primera ventana.", 4),
+    ("Componentes", "Botones, campos, tablas y todo lo demás.", 18),
+    ("Adaptación", "Cómo aprende la interfaz de quien la usa.", 6),
+];
+
+pub fn composicion(ui: &mut Ui, s: &mut State) {
+    ui.title("Componentes dentro de componentes");
+    ui.paragraph_muted(
+        "Un contenedor es dueño de lo que contiene: sus claves, si responde, cómo se ve. Así un componente hecho de otros se puede repetir, pulsar, apagar o vestir de una vez.",
+    );
+
+    ui.card("card-claves", |ui| {
+        ui.label("Cada contenedor tiene su espacio de claves");
+        ui.paragraph_muted(
+            "Las dos tarjetas usan la clave «borrar» para su botón, y son dos botones distintos: lo que declara una tarjeta, un diálogo, un scroll o cualquier contenedor con clave queda bajo la clave del contenedor. Para encontrar algo anidado sin escribir la ruta, ui.find(\"borrar\").",
+        );
+        ui.grid(2, |ui| {
+            for i in 0..2 {
+                ui.card(&format!("nota-{i}"), |ui| {
+                    ui.label(&format!("Nota {}", i + 1));
+                    if ui.button_with("borrar", "Borrar", Variant::Soft, Size::Sm).clicked {
+                        ui.toast(&format!("Borrada la nota {}", i + 1));
+                    }
+                });
+            }
+        });
+    });
+    ui.code(&[
+        "for i in 0..2 {",
+        "    ui.card(&format!(\"nota-{i}\"), |ui| {",
+        "        if ui.button(\"borrar\", \"Borrar\").clicked { /* solo esta nota */ }",
+        "    });",
+        "}",
+        "let segundo = ui.id(\"nota-1\").child(\"borrar\");   // o ui.find_all(\"borrar\")[1]",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Un bloque entero que se pulsa");
+    ui.paragraph_muted("Cualquier contenido se comporta como un botón: se eleva bajo el ratón, se hunde al pulsarlo y llega con Tab. La estrella de dentro sigue siendo suya: pulsarla no abre el proyecto.");
+    for (i, (nombre, detalle)) in PROYECTOS.iter().enumerate() {
+        let r = ui.pressable(&format!("proyecto-{i}"), &format!("Abrir {nombre}"), |ui| {
+            ui.card("tarjeta", |ui| {
+                ui.row(|ui| {
+                    ui.column(|ui| {
+                        ui.label(nombre);
+                        ui.muted(detalle);
+                    });
+                    ui.fill();
+                    let estrella = if s.favs[i] { Variant::Soft } else { Variant::Ghost };
+                    if ui.icon_button("favorito", Icon::Star, estrella, Size::Sm).clicked {
+                        s.favs[i] = !s.favs[i];
+                    }
+                });
+            });
+        });
+        if r.clicked {
+            ui.toast(&format!("Abriste «{nombre}»"));
+        }
+    }
+    ui.code(&[
+        "if ui.pressable(\"proyecto\", \"Abrir el proyecto\", |ui| {",
+        "    ui.label(nombre);",
+        "    if ui.icon_button(\"favorito\", Icon::Star, Variant::Ghost, Size::Sm).clicked {",
+        "        /* solo la estrella */",
+        "    }",
+        "}).clicked { abrir(); }",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Apagar una parte entera");
+    ui.card("card-pagos", |ui| {
+        ui.row(|ui| {
+            ui.label("Cuenta verificada");
+            ui.fill();
+            ui.toggle("verificada", &mut s.verified);
+        });
+        ui.paragraph_muted("Sin verificar, todo el bloque de pagos se atenúa, deja de responder y Tab lo salta, con lo que tenga dentro.");
+        ui.enabled(s.verified, |ui| {
+            ui.card("pagos", |ui| {
+                ui.label("Pagos");
+                ui.text_field("iban", &mut s.iban, "IBAN", 320.0);
+                ui.row(|ui| {
+                    ui.chip("mensual", "Cobro mensual", &mut s.autosave);
+                    ui.fill();
+                    if ui.button("guardar-pagos", "Guardar").clicked {
+                        ui.toast("Pagos guardados");
+                    }
+                });
+            });
+        });
+    });
+    ui.code(&["ui.enabled(verificada, |ui| ui.card(\"pagos\", |ui| { /* campos, botones… */ }));"]);
+
+    ui.space(8.0);
+    ui.title("Contenido en vez de texto");
+    ui.paragraph_muted(
+        "Pestañas, menús, tablas y acordeones aceptan, además de texto, lo que construyas para cada pestaña, opción, celda o cabecera.",
+    );
+    ui.card("card-contenido", |ui| {
+        let sin_leer = [4u32, 0, 2];
+        ui.tabs_with("bandejas", &["Entrada", "Enviados", "Borradores"], &mut s.inbox_tab, |ui, i, _| {
+            ui.label(["Entrada", "Enviados", "Borradores"][i]);
+            if sin_leer[i] > 0 {
+                ui.badge("cuenta", sin_leer[i]);
+            }
+        });
+        ui.space(4.0);
+        ui.row(|ui| {
+            ui.muted("Un menú con atajos:");
+            if let Some(i) = ui.menu_with("editar", "Editar", &[("copiar", "Copiar"), ("pegar", "Pegar"), ("buscar", "Buscar")], |ui, i| {
+                ui.label(["Copiar", "Pegar", "Buscar"][i]);
+                ui.fill();
+                ui.muted(["Ctrl+C", "Ctrl+V", "Ctrl+F"][i]);
+            }) {
+                ui.toast(&format!("Elegiste {}", ["Copiar", "Pegar", "Buscar"][i]));
+            }
+        });
+        ui.space(4.0);
+        let done = &mut s.done;
+        ui.table_with("equipo", &["Persona", "Área", "Avance", ""], &EQUIPO, &mut s.team_sort, |ui, r, c| match c {
+            0 => ui.label(EQUIPO[r][0]),
+            1 => ui.muted(EQUIPO[r][1]),
+            2 => {
+                let v: f32 = EQUIPO[r][2].parse().unwrap_or(0.0);
+                ui.progress(v / 100.0, 90.0);
+                ui.muted(&format!("{v:.0} %"));
+            }
+            _ => {
+                if ui.toggle_button("hecho", if done[r] { "Revisado" } else { "Revisar" }, &mut done[r], Variant::Soft, Size::Sm) {
+                    ui.toast(if done[r] { "Marcado como revisado" } else { "Pendiente de revisar" });
+                }
+            }
+        });
+        ui.space(4.0);
+        ui.accordion_with(
+            "temas",
+            &["Primeros pasos", "Componentes", "Adaptación"],
+            &mut s.topic,
+            |ui, i, abierto| {
+                ui.column(|ui| {
+                    ui.label(TEMAS[i].0);
+                    if !abierto {
+                        ui.muted(TEMAS[i].1);
+                    }
+                });
+                ui.fill();
+                ui.badge("lecciones", TEMAS[i].2);
+            },
+            |ui, i| ui.paragraph_muted(&format!("{} Son {} lecciones.", TEMAS[i].1, TEMAS[i].2)),
+        );
+    });
+    ui.code(&[
+        "ui.tabs_with(\"bandejas\", &nombres, &mut actual, |ui, i, elegida| {",
+        "    ui.label(nombres[i]);",
+        "    ui.badge(\"n\", sin_leer[i]);",
+        "});",
+        "ui.menu_with(\"editar\", \"Editar\", &opciones, |ui, i| { /* la opción i */ });",
+        "ui.table_with(\"equipo\", &cabeceras, &filas, &mut orden, |ui, fila, col| { /* celda */ });",
+        "ui.accordion_with(\"temas\", &nombres, &mut abierta, |ui, i, abierta| { /* cabecera */ },",
+        "    |ui, i| { /* cuerpo */ });",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Estilo que se hereda");
+    ui.paragraph_muted("Tamaño, color de acento y variante de los botones se dan una vez al bloque y lo toman todos los componentes de dentro.");
+    ui.card("card-estilo", |ui| {
+        ui.row(|ui| {
+            ui.muted("Tamaño");
+            ui.segmented("tam", &["Sm", "Md", "Lg"], &mut s.preview_size);
+            ui.fill();
+            ui.muted("Acento");
+            let colores: Vec<Color> = ACCENTS.iter().map(|&c| Color::hex(c)).collect();
+            ui.swatches("acento-bloque", &colores, &mut s.preview_accent);
+        });
+        let size = Size::ALL[s.preview_size];
+        ui.with_size(size, |ui| {
+            ui.with_accent(Color::hex(ACCENTS[s.preview_accent]), |ui| {
+                ui.card("muestra", |ui| {
+                    ui.label("Un bloque con su propio estilo");
+                    ui.row(|ui| {
+                        ui.toggle("muestra-on", &mut s.preview_on);
+                        ui.slider("muestra-nivel", &mut s.level, 180.0);
+                        ui.button("muestra-ok", "Aceptar");
+                    });
+                    ui.with_variant(Variant::Ghost, |ui| {
+                        ui.row(|ui| {
+                            ui.button("muestra-a", "Copiar");
+                            ui.button("muestra-b", "Mover");
+                            ui.button("muestra-c", "Compartir");
+                        });
+                    });
+                });
+            });
+        });
+    });
+    ui.code(&[
+        "ui.with_size(Size::Lg, |ui| {",
+        "    ui.with_accent(verde, |ui| { /* todo lo de dentro, más grande y verde */ });",
+        "});",
+        "ui.with_variant(Variant::Ghost, |ui| { ui.button(\"copiar\", \"Copiar\"); /* … */ });",
     ]);
 }

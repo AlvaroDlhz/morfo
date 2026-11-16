@@ -158,7 +158,8 @@ fn dialog_blocks_what_is_under_it_and_animates_out() {
         };
     }
     settle(&mut ui, &mut t, go!());
-    let (trigger, below, ok) = (ui.id("trigger"), ui.id("under"), ui.id("ok"));
+    // What a dialog holds is the dialog's: its id is under the dialog's.
+    let (trigger, below, ok) = (ui.id("trigger"), ui.id("under"), ui.id("dlg").child("ok"));
     assert!(ui.rect_of(ok).is_none(), "closed dialogs are not built");
     click(&mut ui, &mut t, trigger, go!());
     settle(&mut ui, &mut t, go!());
@@ -256,7 +257,7 @@ fn selection_controls() {
     let acc = ui.id("acc");
     click(&mut ui, &mut t, acc.with(1), &mut build);
     settle(&mut ui, &mut t, &mut build);
-    let in_b = ui.id("in-b");
+    let in_b = acc.with(1).child("in-b");
     assert!(ui.rect_of(in_b).is_some());
     click(&mut ui, &mut t, acc.with(0), &mut build);
     settle(&mut ui, &mut t, &mut build);
@@ -1265,11 +1266,11 @@ fn dashboard_tiles_follow_use() {
         ui.adaptive_dashboard("home", &tiles, 3, |ui, i, _| ui.button(&format!("open-{i}"), "Open").clicked);
     };
     settle(&mut ui, &mut t, build);
-    let tile = |ui: &Ui, k: &str| ui.rect_of(ui.id(k)).unwrap();
+    let tile = |ui: &Ui, k: &str| ui.rect_of(ui.id("home").child(k)).unwrap();
     let (photos_before, mail_before) = (tile(&ui, "photos"), tile(&ui, "mail"));
     assert!(photos_before.y > mail_before.y, "four tiles in rows of three");
     for _ in 0..5 {
-        let b = ui.id("open-3");
+        let b = ui.id("home").child("photos").child("open-3");
         click(&mut ui, &mut t, b, build);
     }
     ui.pointer_left();
@@ -1422,7 +1423,7 @@ fn a_relaunch_restores_the_scroll_already_at_rest() {
     };
     let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
     settle(&mut ui, &mut t, build);
-    let row = ui.id("row8").child("b");
+    let row = ui.id("list").child("row8").child("b");
     let unscrolled = ui.rect_of(row).unwrap().y;
     ui.pointer_moved(ui.rect_of(ui.id("list")).unwrap().center());
     ui.scroll_wheel(-300.0);
@@ -1457,7 +1458,7 @@ fn a_relaunch_restores_the_scroll_already_at_rest() {
         });
     };
     settle(&mut shorter, &mut t, short);
-    assert!(shorter.rect_of(shorter.id("row0").child("b")).unwrap().y > 0.0);
+    assert!(shorter.rect_of(shorter.id("list").child("row0").child("b")).unwrap().y > 0.0);
 
     assert!(!next.restore_state("not a saved state"));
     assert!(!next.restore_state("morfo-ui1\ns zz 10\n"));
@@ -1489,4 +1490,867 @@ fn a_notice_stays_while_declared_and_then_leaves() {
     assert!(frame(&mut ui, &mut t, build));
     settle(&mut ui, &mut t, build);
     assert_eq!(texts(&ui), ["App"]);
+}
+
+// ----- charts, navigation, forms, status and panes -------------------------
+
+use morfo::{Date, Shortcut, Side};
+use std::cell::{Cell, RefCell};
+
+fn press_at(ui: &mut Ui, t: &mut f64, p: Vec2, mut f: impl FnMut(&mut Ui)) {
+    ui.pointer_moved(p);
+    frame(ui, t, &mut f);
+    ui.pointer_pressed();
+    frame(ui, t, &mut f);
+}
+
+fn release(ui: &mut Ui, t: &mut f64, mut f: impl FnMut(&mut Ui)) {
+    ui.pointer_released();
+    frame(ui, t, &mut f);
+}
+
+#[test]
+fn charts_travel_to_new_data_and_report_clicks() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let data = RefCell::new(vec![10.0f32, 40.0, 25.0]);
+    let (bar, cell) = (Cell::new(None), Cell::new(None));
+    let build = |ui: &mut Ui| {
+        let v = data.borrow();
+        if let Some(i) = ui.bar_chart("bars", &["a", "b", "c"], &v, Vec2::new(400.0, 160.0)) {
+            bar.set(Some(i));
+        }
+        ui.line_chart("lines", &["1", "2", "3"], &[("x", &v[..]), ("y", &[5.0, -5.0, 5.0])], Vec2::new(400.0, 120.0));
+        ui.sparkline(&v, 120.0);
+        if let Some(c) = ui.heatmap("heat", &["r1", "r2"], &["c1", "c2", "c3"], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) {
+            cell.set(Some(c));
+        }
+        ui.gauge("gauge", "Uso", v[1] / 50.0, 120.0);
+    };
+    settle(&mut ui, &mut t, build);
+    let b = ui.id("bars").child("b");
+    let tall = ui.rect_of(b).unwrap().h;
+    data.borrow_mut()[1] = 5.0;
+    assert!(frame(&mut ui, &mut t, build), "new data is a movement, not a jump");
+    assert!(ui.rect_of(b).unwrap().h > tall * 0.5);
+    settle(&mut ui, &mut t, build);
+    assert!(ui.rect_of(b).unwrap().h < tall * 0.5);
+    let c = ui.id("bars").child("c");
+    click(&mut ui, &mut t, c, build);
+    assert_eq!(bar.get(), Some(2));
+    let last = ui.id("heat").with(5);
+    click(&mut ui, &mut t, last, build);
+    assert_eq!(cell.get(), Some((1, 2)));
+    // Hovering a bar shows its value.
+    ui.pointer_moved(ui.rect_of(c).unwrap().center());
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).iter().any(|s| s == "c: 25"));
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    assert!(!texts(&ui).iter().any(|s| s == "c: 25"), "the card fades away");
+}
+
+#[test]
+fn tabs_pagination_and_breadcrumbs() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (tab, page, crumb) = (Cell::new(0usize), Cell::new(0usize), Cell::new(None));
+    let build = |ui: &mut Ui| {
+        let mut s = tab.get();
+        ui.tabs("tabs", &["Uno", "Dos", "Tres"], &mut s);
+        tab.set(s);
+        let mut p = page.get();
+        ui.pagination("pag", 20, &mut p);
+        page.set(p);
+        if let Some(i) = ui.breadcrumbs("path", &["Inicio", "Documentos", "Informe"]) {
+            crumb.set(Some(i));
+        }
+    };
+    settle(&mut ui, &mut t, build);
+    let third = ui.id("tabs").with(2);
+    click(&mut ui, &mut t, third, build);
+    assert_eq!(tab.get(), 2);
+    ui.key_pressed(Key::Left);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(tab.get(), 1, "the arrows move between tabs");
+
+    let last = ui.id("pag").child("page").with(19);
+    click(&mut ui, &mut t, last, build);
+    assert_eq!(page.get(), 19);
+    settle(&mut ui, &mut t, build);
+    let back = ui.id("pag").child("arrow").with(0);
+    click(&mut ui, &mut t, back, build);
+    assert_eq!(page.get(), 18);
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).iter().any(|s| s == "16"), "the window of pages followed");
+
+    let docs = ui.id("path").child("Documentos").with(1);
+    click(&mut ui, &mut t, docs, build);
+    assert_eq!(crumb.get(), Some(1));
+
+    // In a narrow space the middle of a long path folds into "…".
+    let mut narrow = Ui::new(Theme::dark());
+    let long = ["Inicio", "Documentos", "Proyectos", "2026", "Noviembre", "Informe final"];
+    for i in 0..4 {
+        narrow.begin(i as f64 / 60.0, Vec2::new(380.0, 300.0));
+        narrow.breadcrumbs("path", &long);
+        narrow.end();
+    }
+    let shown = texts(&narrow);
+    assert!(shown.contains(&"…".to_string()) && shown.contains(&"Informe final".to_string()));
+    assert!(!shown.contains(&"Proyectos".to_string()));
+}
+
+#[test]
+fn a_tree_opens_and_closes_its_branches() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let items = [(0, "src"), (1, "lib.rs"), (1, "ui"), (2, "mod.rs"), (0, "README.md")];
+    let sel = Cell::new(None);
+    let build = |ui: &mut Ui| {
+        let mut s = sel.get();
+        ui.tree("tree", &items, &mut s);
+        sel.set(s);
+    };
+    settle(&mut ui, &mut t, build);
+    assert!(!texts(&ui).contains(&"lib.rs".to_string()), "branches start closed");
+    let src = ui.id("tree").child("src");
+    click(&mut ui, &mut t, src, build);
+    settle(&mut ui, &mut t, build);
+    assert_eq!(sel.get(), Some(0));
+    assert!(texts(&ui).contains(&"lib.rs".to_string()));
+    let lib = src.child("lib.rs");
+    click(&mut ui, &mut t, lib, build);
+    assert_eq!(sel.get(), Some(1));
+    click(&mut ui, &mut t, src, build);
+    settle(&mut ui, &mut t, build);
+    assert!(!texts(&ui).contains(&"lib.rs".to_string()), "closed again");
+    assert!(texts(&ui).contains(&"README.md".to_string()));
+}
+
+#[test]
+fn a_drawer_slides_in_and_closes_outside() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let open = Cell::new(true);
+    let build = |ui: &mut Ui| {
+        let mut o = open.get();
+        ui.label("Debajo");
+        ui.drawer("panel", "Ajustes", Side::Right, &mut o, 300.0, |ui| ui.label("Dentro"));
+        open.set(o);
+    };
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"Dentro".to_string()));
+    press_at(&mut ui, &mut t, Vec2::new(100.0, 300.0), build);
+    release(&mut ui, &mut t, build);
+    assert!(!open.get(), "a click outside closes it");
+    settle(&mut ui, &mut t, build);
+    assert!(!texts(&ui).contains(&"Dentro".to_string()));
+    open.set(true);
+    settle(&mut ui, &mut t, build);
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, build);
+    assert!(!open.get(), "and so does Escape");
+}
+
+#[test]
+fn date_and_color_pickers() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let date = Cell::new(Date::new(2026, 11, 16));
+    let color = Cell::new(Color::hex(0xff0000));
+    let build = |ui: &mut Ui| {
+        let mut d = date.get();
+        ui.date_picker("fecha", &mut d);
+        date.set(d);
+        let mut c = color.get();
+        ui.color_picker("color", &mut c, 240.0);
+        color.set(c);
+    };
+    settle(&mut ui, &mut t, build);
+    let field = ui.id("fecha");
+    click(&mut ui, &mut t, field, build);
+    settle(&mut ui, &mut t, build);
+    let day = field.child("day").with(20);
+    click(&mut ui, &mut t, day, build);
+    assert_eq!(date.get(), Date::new(2026, 11, 20));
+    settle(&mut ui, &mut t, build);
+    // Next month, then its first day.
+    click(&mut ui, &mut t, field, build);
+    settle(&mut ui, &mut t, build);
+    let next = field.child("siguiente");
+    click(&mut ui, &mut t, next, build);
+    settle(&mut ui, &mut t, build);
+    let first = field.child("day").with(1);
+    click(&mut ui, &mut t, first, build);
+    assert_eq!(date.get(), Date::new(2026, 12, 1));
+    settle(&mut ui, &mut t, build);
+    // With the field focused, the arrows move by days and weeks.
+    ui.key_pressed(Key::Right);
+    frame(&mut ui, &mut t, build);
+    ui.key_pressed(Key::Down);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(date.get(), Date::new(2026, 12, 9));
+
+    // The middle of the hue bar is cyan; the bottom of the square, black.
+    let bar = ui.rect_of(ui.id("color").child("hue")).unwrap();
+    press_at(&mut ui, &mut t, bar.center(), build);
+    release(&mut ui, &mut t, build);
+    assert_eq!(color.get().to_hex(), 0x00ffff);
+    let square = ui.rect_of(ui.id("color").child("sv")).unwrap();
+    // Dragged past the bottom-left corner it clamps to black.
+    press_at(&mut ui, &mut t, Vec2::new(square.x + 1.0, square.bottom() - 1.0), build);
+    ui.pointer_moved(Vec2::new(square.x - 50.0, square.bottom() + 50.0));
+    frame(&mut ui, &mut t, build);
+    release(&mut ui, &mut t, build);
+    assert_eq!(color.get().to_hex(), 0x000000);
+    // Back to full brightness, it is still cyan: the picker kept the hue,
+    // which black alone does not have.
+    press_at(&mut ui, &mut t, Vec2::new(square.right() - 1.0, square.y + 1.0), build);
+    release(&mut ui, &mut t, build);
+    let hsv = color.get().to_hsv();
+    assert!((hsv.h - 0.5).abs() < 0.01 && hsv.s > 0.98 && hsv.v > 0.98, "{hsv:?}");
+}
+
+#[test]
+fn tags_multiple_choice_and_shortcuts() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let tags = RefCell::new(Vec::<String>::new());
+    let picked = RefCell::new(Vec::<usize>::new());
+    let shortcut = RefCell::new(None::<Shortcut>);
+    let build = |ui: &mut Ui| {
+        ui.tag_input("tags", &mut tags.borrow_mut(), "Añade etiquetas", 360.0);
+        ui.multi_select("multi", &["Alpha", "Beta", "Gamma"], &mut picked.borrow_mut(), "Elige", 300.0);
+        ui.shortcut_input("atajo", &mut shortcut.borrow_mut(), 240.0);
+    };
+    settle(&mut ui, &mut t, build);
+    let tag_box = ui.id("tags");
+    click(&mut ui, &mut t, tag_box, build);
+    assert!(ui.has_focus(), "a click on the box goes to its field");
+    ui.text_input("rust");
+    frame(&mut ui, &mut t, build);
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, build);
+    ui.text_input("ui, web,");
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*tags.borrow(), ["rust", "ui", "web"]);
+    ui.key_pressed(Key::Backspace);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*tags.borrow(), ["rust", "ui"], "Backspace on an empty field removes the last one");
+    settle(&mut ui, &mut t, build);
+    let x = tag_box.child("tag").child("rust").child("x");
+    click(&mut ui, &mut t, x, build);
+    assert_eq!(*tags.borrow(), ["ui"]);
+
+    let multi = ui.id("multi");
+    click(&mut ui, &mut t, multi, build);
+    settle(&mut ui, &mut t, build);
+    assert!(ui.has_focus(), "the search box has the focus");
+    ui.text_input("gam");
+    frame(&mut ui, &mut t, build);
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*picked.borrow(), [2]);
+    // Choosing does not close the list: a click on another option adds it.
+    settle(&mut ui, &mut t, build);
+    ui.key_pressed(Key::Backspace);
+    ui.key_pressed(Key::Backspace);
+    ui.key_pressed(Key::Backspace);
+    frame(&mut ui, &mut t, build);
+    settle(&mut ui, &mut t, build);
+    let alpha = multi.child("op").with(0);
+    click(&mut ui, &mut t, alpha, build);
+    assert_eq!(*picked.borrow(), [2, 0]);
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, build);
+    settle(&mut ui, &mut t, build);
+    assert_eq!(*picked.borrow(), [2, 0], "they stay chosen after closing");
+    assert!(texts(&ui).contains(&"Gamma".to_string()) && texts(&ui).contains(&"Alpha".to_string()));
+
+    let field = ui.id("atajo");
+    click(&mut ui, &mut t, field, build);
+    assert!(ui.wants_keys());
+    ui.set_modifiers(morfo::Modifiers { shift: true, ctrl: true });
+    ui.chord("k");
+    frame(&mut ui, &mut t, build);
+    ui.set_modifiers(morfo::Modifiers::default());
+    assert_eq!(shortcut.borrow().as_ref().map(|s| s.to_string()), Some("Ctrl+Mayús+K".to_string()));
+    assert!(!ui.wants_keys(), "recorded, it lets go of the keyboard");
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"Mayús".to_string()));
+    click(&mut ui, &mut t, field, build);
+    ui.key_pressed(Key::Backspace);
+    frame(&mut ui, &mut t, build);
+    assert!(shortcut.borrow().is_none());
+}
+
+#[test]
+fn skeleton_badges_and_steps() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (loading, count, step) = (Cell::new(true), Cell::new(3u32), Cell::new(2usize));
+    let build = |ui: &mut Ui| {
+        ui.skeleton("card", loading.get(), 3, |ui| ui.label("Cargado"));
+        ui.badge("count", count.get());
+        ui.icon_button("bell", morfo::Icon::Star, morfo::Variant::Ghost, morfo::Size::Md);
+        ui.badge_on("bell", 5);
+        let mut s = step.get();
+        ui.steps("steps", &["Datos", "Pago", "Fin"], &mut s);
+        step.set(s);
+    };
+    for _ in 0..200 {
+        frame(&mut ui, &mut t, build);
+    }
+    assert!(frame(&mut ui, &mut t, build), "the shimmer keeps moving while loading");
+    assert!(!texts(&ui).contains(&"Cargado".to_string()));
+    assert!(texts(&ui).contains(&"3".to_string()) && texts(&ui).contains(&"5".to_string()));
+    loading.set(false);
+    count.set(120);
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"Cargado".to_string()));
+    assert!(texts(&ui).contains(&"99+".to_string()));
+    count.set(0);
+    settle(&mut ui, &mut t, build);
+    assert!(!texts(&ui).contains(&"99+".to_string()), "at zero it goes away");
+
+    // A step ahead cannot be clicked; one done can.
+    let ahead = ui.id("steps").with(2);
+    step.set(1);
+    settle(&mut ui, &mut t, build);
+    click(&mut ui, &mut t, ahead, build);
+    assert_eq!(step.get(), 1);
+    let first = ui.id("steps").with(0);
+    click(&mut ui, &mut t, first, build);
+    assert_eq!(step.get(), 0);
+}
+
+#[test]
+fn a_splitter_drags_and_a_board_moves_cards() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let ratio = Cell::new(0.5f32);
+    let board = RefCell::new(vec![vec!["a".to_string(), "b".to_string()], vec!["c".to_string()]]);
+    let build = |ui: &mut Ui| {
+        let mut r = ratio.get();
+        ui.splitter("split", &mut r, 160.0, |ui, i| ui.label(if i == 0 { "Izquierda" } else { "Derecha" }));
+        ratio.set(r);
+        ui.kanban("board", &["Por hacer", "Hecho"], &mut board.borrow_mut());
+    };
+    settle(&mut ui, &mut t, build);
+    let handle = ui.rect_of(ui.id("split").child("divisor")).unwrap();
+    press_at(&mut ui, &mut t, handle.center(), build);
+    ui.pointer_moved(handle.center() - Vec2::new(150.0, 0.0));
+    frame(&mut ui, &mut t, build);
+    assert!(ratio.get() < 0.35, "{}", ratio.get());
+    ui.pointer_moved(Vec2::new(-500.0, handle.center().y));
+    frame(&mut ui, &mut t, build);
+    assert_eq!(ratio.get(), 0.15, "panes keep a minimum");
+    release(&mut ui, &mut t, build);
+    settle(&mut ui, &mut t, build);
+
+    // Drag "a" under "c", in the other column.
+    let a = ui.rect_of(ui.id("board").child("a")).unwrap();
+    let c = ui.rect_of(ui.id("board").child("c")).unwrap();
+    press_at(&mut ui, &mut t, a.center(), build);
+    for k in 1..=10 {
+        let to = a.center() + (Vec2::new(c.center().x, c.bottom() + c.h * 0.6) - a.center()) * (k as f32 / 10.0);
+        ui.pointer_moved(to);
+        frame(&mut ui, &mut t, build);
+    }
+    release(&mut ui, &mut t, build);
+    assert_eq!(*board.borrow(), [vec!["b".to_string()], vec!["c".to_string(), "a".to_string()]]);
+    settle(&mut ui, &mut t, build);
+    let landed = ui.rect_of(ui.id("board").child("a")).unwrap();
+    assert!(landed.y > c.y && (landed.x - c.x).abs() < 1.0, "it settled under «c»");
+}
+
+// ----- scroll and transitions -------------------------------------------------
+
+use morfo::{Reveal, Transition};
+
+/// Position and opacity of the text `s`, if it is drawn.
+fn text_at(ui: &Ui, s: &str) -> Option<(Vec2, f32)> {
+    let list = ui.draw_list();
+    list.commands().iter().find_map(|c| match *c {
+        DrawCmd::Text { pos, color, start, len, .. } if list.text(start, len) == s => Some((pos, color.a)),
+        _ => None,
+    })
+}
+
+/// Rectangles filled with `color`.
+fn rects_of(ui: &Ui, color: Color) -> Vec<morfo::Rect> {
+    let close = |a: Color| (a.r - color.r).abs() + (a.g - color.g).abs() + (a.b - color.b).abs() < 0.02 && a.a > 0.5;
+    ui.draw_list()
+        .commands()
+        .iter()
+        .filter_map(|c| if let DrawCmd::Rect { rect, fill, .. } = *c { close(fill).then_some(rect) } else { None })
+        .collect()
+}
+
+#[test]
+fn content_enters_as_it_scrolls_into_view() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("lista", 200.0, |ui| {
+            for i in 0..12 {
+                ui.scroll_reveal(&format!("r{i}"), Reveal::Rise, |ui| {
+                    ui.label(&format!("item {i}"));
+                    ui.space(50.0);
+                });
+            }
+        });
+    };
+    // What is in view enters one after another.
+    let mut staggered = false;
+    for _ in 0..30 {
+        frame(&mut ui, &mut t, build);
+        let a0 = text_at(&ui, "item 0").map_or(0.0, |x| x.1);
+        let a1 = text_at(&ui, "item 1").map_or(0.0, |x| x.1);
+        staggered |= a0 > 0.3 && a1 < a0 - 0.1;
+    }
+    assert!(staggered, "the second item starts after the first");
+    settle(&mut ui, &mut t, build);
+    assert!(text_at(&ui, "item 0").unwrap().1 > 0.99);
+    assert!(text_at(&ui, "item 7").is_none_or(|x| x.1 < 0.01), "below the view, still waiting");
+
+    // Scrolled into view, it rises into its place.
+    let area = ui.rect_of(ui.id("lista")).unwrap();
+    ui.pointer_moved(area.center());
+    ui.scroll_wheel(-450.0);
+    let mut first_y = None;
+    for _ in 0..200 {
+        let moving = frame(&mut ui, &mut t, build);
+        if let Some((p, a)) = text_at(&ui, "item 7") {
+            if a > 0.05 && first_y.is_none() {
+                first_y = Some(p.y);
+            }
+        }
+        if !moving {
+            break;
+        }
+    }
+    let (end, a) = text_at(&ui, "item 7").unwrap();
+    assert!(a > 0.99);
+    assert!(first_y.unwrap() > end.y + 4.0, "it came from below: {first_y:?} → {}", end.y);
+}
+
+#[test]
+fn numbers_count_up_when_seen() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| ui.count_up("descargas", 12480.0, 0, 32.0);
+    let mut partial = false;
+    for _ in 0..40 {
+        frame(&mut ui, &mut t, build);
+        partial |= texts(&ui).iter().any(|s| s != "12.480" && !s.is_empty());
+    }
+    assert!(partial, "it showed the numbers on the way");
+    settle(&mut ui, &mut t, build);
+    assert_eq!(texts(&ui), ["12.480"]);
+}
+
+#[test]
+fn a_header_stays_pinned_until_the_next_section_pushes_it() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("contactos", 200.0, |ui| {
+            for letter in ["A", "B", "C"] {
+                ui.sticky_section(
+                    letter,
+                    |ui| ui.title(letter),
+                    |ui| {
+                        for i in 0..8 {
+                            ui.label(&format!("{letter}{i}"));
+                        }
+                    },
+                );
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let area = ui.rect_of(ui.id("contactos")).unwrap();
+    let top = text_at(&ui, "A").unwrap().0.y;
+    assert!((top - area.y).abs() < 1.0);
+
+    ui.pointer_moved(area.center());
+    ui.scroll_wheel(-100.0);
+    settle(&mut ui, &mut t, build);
+    assert!((text_at(&ui, "A").unwrap().0.y - area.y).abs() < 1.0, "pinned at the top");
+    let order = texts(&ui);
+    let (head, row) = (order.iter().position(|s| s == "A").unwrap(), order.iter().position(|s| s == "A3").unwrap());
+    assert!(head > row, "drawn over the rows that pass under it");
+
+    // Travelling to «B» brings its header to the top and pushes «A» out.
+    ui.scroll_to("B");
+    settle(&mut ui, &mut t, build);
+    assert!((text_at(&ui, "B").unwrap().0.y - area.y).abs() < 1.5, "B at the top");
+    assert!(text_at(&ui, "A").is_none_or(|(p, _)| p.y + 16.0 <= area.y + 1.0), "A pushed away");
+}
+
+#[test]
+fn a_scroll_area_stretches_past_its_end_and_springs_back() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let progress = Cell::new(-1.0f32);
+    let build = |ui: &mut Ui| {
+        ui.scroll("lista", 150.0, |ui| {
+            progress.set(ui.scroll_progress());
+            for i in 0..30 {
+                ui.label(&format!("fila {i}"));
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    assert_eq!(progress.get(), 0.0);
+    let y0 = text_at(&ui, "fila 0").unwrap().0.y;
+    ui.pointer_moved(ui.rect_of(ui.id("lista")).unwrap().center());
+    ui.scroll_wheel(200.0);
+    let mut furthest = y0;
+    for _ in 0..200 {
+        let moving = frame(&mut ui, &mut t, build);
+        furthest = furthest.max(text_at(&ui, "fila 0").unwrap().0.y);
+        if !moving {
+            break;
+        }
+    }
+    assert!(furthest > y0 + 5.0, "it stretched: {y0} → {furthest}");
+    assert_eq!(text_at(&ui, "fila 0").unwrap().0.y, y0, "and came back exactly");
+    ui.scroll_wheel(-10_000.0);
+    settle(&mut ui, &mut t, build);
+    assert_eq!(progress.get(), 1.0);
+}
+
+#[test]
+fn scrolled_content_moves_as_one_piece() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("lista", 200.0, |ui| {
+            for i in 0..40 {
+                ui.button(&format!("b{i}"), &format!("Fila {i}"));
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let gap = |ui: &Ui| ui.rect_of(ui.find("b3").unwrap()).unwrap().y - ui.rect_of(ui.find("b2").unwrap()).unwrap().y;
+    let rest = gap(&ui);
+    ui.pointer_moved(ui.rect_of(ui.id("lista")).unwrap().center());
+    ui.scroll_wheel(-300.0);
+    let start = ui.rect_of(ui.find("b2").unwrap()).unwrap().y;
+    for _ in 0..60 {
+        frame(&mut ui, &mut t, build);
+        assert!((gap(&ui) - rest).abs() < 0.01, "rows keep their spacing while scrolling");
+    }
+    assert!(ui.rect_of(ui.find("b2").unwrap()).unwrap().y < start - 250.0);
+}
+
+#[test]
+fn parallax_layers_hold_back_as_the_page_scrolls() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let blue = Color::hex(0x2050e0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("pagina", 300.0, |ui| {
+            ui.space(200.0);
+            ui.parallax("paisaje", 120.0, &[0.5], |ui, _| {
+                ui.surface("capa", Vec2::new(200.0, 220.0), 0.0, blue);
+            });
+            ui.space(600.0);
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let window = |ui: &Ui| ui.rect_of(ui.find("paisaje").unwrap()).unwrap();
+    let layer = |ui: &Ui| rects_of(ui, blue)[0];
+    let (w0, l0) = (window(&ui), layer(&ui));
+    ui.pointer_moved(ui.rect_of(ui.id("pagina")).unwrap().center());
+    ui.scroll_wheel(-100.0);
+    settle(&mut ui, &mut t, build);
+    let (w1, l1) = (window(&ui), layer(&ui));
+    let page = w0.y - w1.y;
+    assert!(page > 50.0);
+    assert!(((l0.y - l1.y) - page * 0.5).abs() < 1.0, "the layer moved half as much: {} of {page}", l0.y - l1.y);
+}
+
+#[test]
+fn a_transition_moves_the_old_view_out_and_the_new_one_in() {
+    for style in Transition::ALL {
+        let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+        let view = Cell::new(0usize);
+        let build = |ui: &mut Ui| {
+            let v = view.get();
+            ui.transition("vistas", v, style, |ui| ui.label(if v == 0 { "Uno" } else { "Dos" }));
+            ui.button("debajo", "Debajo");
+        };
+        settle(&mut ui, &mut t, build);
+        let home = text_at(&ui, "Uno").unwrap().0;
+        view.set(1);
+        let mut both = false;
+        for _ in 0..12 {
+            frame(&mut ui, &mut t, build);
+            both |= text_at(&ui, "Uno").is_some() && text_at(&ui, "Dos").is_some();
+        }
+        if style != Transition::Flip {
+            assert!(both, "{style:?}: both views are drawn on the way");
+        }
+        if matches!(style, Transition::Slide | Transition::Shift | Transition::Push) {
+            let (p, _) = text_at(&ui, "Dos").unwrap();
+            assert!(p.x > home.x + 1.0, "{style:?}: forward comes from the right");
+        }
+        settle(&mut ui, &mut t, build);
+        assert_eq!(texts(&ui), ["Dos", "Debajo"], "{style:?}");
+        assert_eq!(text_at(&ui, "Dos").unwrap().0, home, "{style:?}: it lands where the old one was");
+        if matches!(style, Transition::Slide | Transition::Shift) {
+            view.set(0);
+            let mut from = None;
+            for _ in 0..30 {
+                frame(&mut ui, &mut t, build);
+                from = from.or(text_at(&ui, "Uno").map(|x| x.0.x));
+            }
+            assert!(from.unwrap() < home.x - 1.0, "{style:?}: back comes from the left");
+        }
+    }
+}
+
+#[test]
+fn a_shared_element_flies_between_views() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let red = Color::hex(0xe03030);
+    let view = Cell::new(0usize);
+    let build = |ui: &mut Ui| {
+        let v = view.get();
+        ui.transition("galeria", v, Transition::Fade, |ui| {
+            if v == 0 {
+                ui.label("Galería");
+                ui.hero("foto", |ui| {
+                    ui.surface("mini", Vec2::new(80.0, 60.0), 8.0, red);
+                });
+            } else {
+                ui.space(160.0);
+                ui.hero("foto", |ui| {
+                    ui.surface("grande", Vec2::new(400.0, 240.0), 8.0, red);
+                });
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let small = rects_of(&ui, red)[0];
+    view.set(1);
+    frame(&mut ui, &mut t, build);
+    frame(&mut ui, &mut t, build);
+    let flying = rects_of(&ui, red);
+    assert_eq!(flying.len(), 1, "the old copy is left out of the view that leaves");
+    assert!(flying[0].w < 200.0 && (flying[0].y - small.y).abs() < 80.0, "it starts from the small one: {:?}", flying[0]);
+    let mut grew = flying[0].w;
+    for _ in 0..200 {
+        let moving = frame(&mut ui, &mut t, build);
+        let now = rects_of(&ui, red);
+        assert_eq!(now.len(), 1);
+        assert!(now[0].w >= grew - 1.0, "it keeps growing");
+        grew = now[0].w;
+        if !moving {
+            break;
+        }
+    }
+    let big = rects_of(&ui, red)[0];
+    assert!((big.w - 400.0).abs() < 0.5 && big.y > small.y + 100.0, "it lands in the detail view: {big:?}");
+}
+
+// ----- components inside components -----------------------------------------
+
+#[test]
+fn repeated_components_keep_their_insides_apart() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let clicks = RefCell::new([0, 0]);
+    let build = |ui: &mut Ui| {
+        for i in 0..2 {
+            ui.card(&format!("tarjeta-{i}"), |ui| {
+                ui.label(&format!("Tarjeta {i}"));
+                if ui.button("borrar", "Borrar").clicked {
+                    clicks.borrow_mut()[i] += 1;
+                }
+            });
+        }
+    };
+    settle(&mut ui, &mut t, build);
+    let both = ui.find_all("borrar");
+    assert_eq!(both.len(), 2, "two buttons, two elements");
+    assert_eq!(both[1], ui.id("tarjeta-1").child("borrar"), "a card's insides are under the card");
+    click(&mut ui, &mut t, both[1], build);
+    assert_eq!(*clicks.borrow(), [0, 1], "only the button clicked reacts");
+    assert_eq!(ui.find("borrar"), Some(both[0]));
+    assert_eq!(ui.find("nada"), None);
+}
+
+#[test]
+fn a_pressable_is_one_button_that_lets_its_controls_work() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (whole, inner) = (Cell::new(0), Cell::new(0));
+    let build = |ui: &mut Ui| {
+        if ui
+            .pressable("fila", "Abrir la fila", |ui| {
+                ui.label("Una fila entera");
+                ui.muted("con dos líneas");
+                if ui.button("dentro", "Botón").clicked {
+                    inner.set(inner.get() + 1);
+                }
+            })
+            .clicked
+        {
+            whole.set(whole.get() + 1);
+        }
+    };
+    settle(&mut ui, &mut t, build);
+    let row = ui.find("fila").unwrap();
+    let r = ui.rect_of(row).unwrap();
+    // On the text: the whole thing is pressed.
+    press_at(&mut ui, &mut t, Vec2::new(r.x + 10.0, r.y + 8.0), build);
+    release(&mut ui, &mut t, build);
+    assert_eq!((whole.get(), inner.get()), (1, 0));
+    // On the button inside: only the button.
+    let target = ui.find("dentro").unwrap();
+    click(&mut ui, &mut t, target, build);
+    assert_eq!((whole.get(), inner.get()), (1, 1));
+    // From the keyboard, like any button: Tab to it, then Enter.
+    ui.pointer_left();
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(ui.focused(), Some(row));
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(whole.get(), 2);
+}
+
+#[test]
+fn a_disabled_part_dims_and_ignores_everything() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let on = Cell::new(false);
+    let clicks = Cell::new(0);
+    let build = |ui: &mut Ui| {
+        ui.button("antes", "Antes");
+        ui.enabled(on.get(), |ui| {
+            ui.card("bloque", |ui| {
+                if ui.button("guardar", "Guardar").clicked {
+                    clicks.set(clicks.get() + 1);
+                }
+            });
+        });
+        ui.button("despues", "Después");
+    };
+    ui.set_accessibility(true);
+    settle(&mut ui, &mut t, build);
+    let save = ui.find("guardar").unwrap();
+    click(&mut ui, &mut t, save, build);
+    assert_eq!(clicks.get(), 0, "a click does nothing");
+    assert!(text_at(&ui, "Guardar").unwrap().1 < 0.5, "it is dimmed");
+    assert!(ui.access_nodes().iter().any(|n| n.id == save && n.disabled), "and announced as disabled");
+    // Tab goes from the button before it to the one after.
+    ui.pointer_left();
+    let target = ui.find("antes").unwrap();
+    click(&mut ui, &mut t, target, build);
+    ui.key_pressed(Key::Tab);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(ui.focused(), ui.find("despues"));
+    // Back on: it fades in and works.
+    on.set(true);
+    settle(&mut ui, &mut t, build);
+    assert!(text_at(&ui, "Guardar").unwrap().1 > 0.99);
+    click(&mut ui, &mut t, save, build);
+    assert_eq!(clicks.get(), 1);
+}
+
+#[test]
+fn tabs_menus_tables_and_accordions_take_content() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (tab, open, sort) = (Cell::new(0usize), Cell::new(None), Cell::new(None));
+    let (picked, row, done) = (Cell::new(None), Cell::new(None), Cell::new(0));
+    let rows: [&[&str]; 2] = [&["Ana", "3"], &["Bruno", "1"]];
+    let build = |ui: &mut Ui| {
+        let mut sel = tab.get();
+        ui.tabs_with("pestanas", &["Bandeja", "Enviados"], &mut sel, |ui, i, on| {
+            ui.label(if i == 0 { "Bandeja" } else { "Enviados" });
+            if i == 0 {
+                ui.badge("sin-leer", 4);
+            }
+            if on {
+                ui.muted("•");
+            }
+        });
+        tab.set(sel);
+        if let Some(i) = ui.menu_with("acciones", "Acciones", &[("copiar", "Copiar"), ("pegar", "Pegar")], |ui, i| {
+            ui.label(["Copiar", "Pegar"][i]);
+            ui.muted(["Ctrl+C", "Ctrl+V"][i]);
+        }) {
+            picked.set(Some(i));
+        }
+        let mut s = sort.get();
+        if let Some(r) = ui.table_with("personas", &["Nombre", "Tareas"], &rows, &mut s, |ui, r, c| {
+            if c == 0 {
+                ui.label(rows[r][0]);
+            } else if ui.button_with("hecho", "Hecho", morfo::Variant::Soft, morfo::Size::Sm).clicked {
+                done.set(done.get() + 1);
+            }
+        }) {
+            row.set(Some(r));
+        }
+        sort.set(s);
+        let mut o = open.get();
+        ui.accordion_with(
+            "secciones",
+            &["Uno", "Dos"],
+            &mut o,
+            |ui, i, _| {
+                ui.label(["Uno", "Dos"][i]);
+                ui.muted("con subtítulo");
+            },
+            |ui, i| ui.label(&format!("Cuerpo {i}")),
+        );
+        open.set(o);
+    };
+    settle(&mut ui, &mut t, build);
+    let shown = texts(&ui);
+    for s in ["Bandeja", "4", "Enviados", "Ana", "Bruno", "Uno", "con subtítulo"] {
+        assert!(shown.iter().any(|x| x == s), "«{s}» is drawn: {shown:?}");
+    }
+    // Tabs: a click on the second selects it.
+    let target = ui.id("pestanas").with(1);
+    click(&mut ui, &mut t, target, build);
+    assert_eq!(tab.get(), 1);
+    // Table: the button in a cell takes the click, the row does not.
+    let buttons = ui.find_all("hecho");
+    assert_eq!(buttons.len(), 2);
+    click(&mut ui, &mut t, buttons[1], build);
+    assert_eq!((done.get(), row.get()), (1, None));
+    // A click elsewhere on the row is the row's.
+    let r = ui.rect_of(ui.id("personas").child("row").with(0)).unwrap();
+    press_at(&mut ui, &mut t, Vec2::new(r.x + 8.0, r.center().y), build);
+    release(&mut ui, &mut t, build);
+    assert_eq!(row.get(), Some(0));
+    // Accordion: the custom header opens its section.
+    let target = ui.id("secciones").with(1);
+    click(&mut ui, &mut t, target, build);
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).iter().any(|x| x == "Cuerpo 1"));
+    // Menu: options with two parts, one chosen.
+    let target = ui.id("acciones");
+    click(&mut ui, &mut t, target, build);
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).iter().any(|x| x == "Ctrl+V"));
+    let target = ui.id("acciones").child("pegar");
+    click(&mut ui, &mut t, target, build);
+    assert_eq!(picked.get(), Some(1));
+}
+
+#[test]
+fn a_style_is_inherited_by_what_is_inside() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let green = Color::hex(0x22c3a6);
+    let build = |ui: &mut Ui| {
+        ui.button("normal", "Normal");
+        ui.with_accent(green, |ui| {
+            ui.button("verde", "Verde");
+        });
+        ui.with_size(morfo::Size::Lg, |ui| {
+            ui.button("grande", "Grande");
+        });
+        ui.with_variant(morfo::Variant::Ghost, |ui| {
+            ui.button("discreto", "Discreto");
+        });
+    };
+    ui.pointer_left();
+    settle(&mut ui, &mut t, build);
+    let h = |ui: &Ui, k: &str| ui.rect_of(ui.find(k).unwrap()).unwrap().h;
+    assert!(h(&ui, "grande") > h(&ui, "normal") * 1.1, "larger inside with_size(Lg)");
+    assert_eq!(rects_of(&ui, green).len(), 1, "only the button inside with_accent is green");
+    // A ghost button has no fill at rest: one solid fill fewer.
+    let accent = ui.palette()[morfo::theme::ACCENT];
+    assert_eq!(rects_of(&ui, accent).len(), 2, "«Normal» and «Grande» are solid; «Discreto» is not");
 }

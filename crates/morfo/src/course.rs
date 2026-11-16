@@ -35,7 +35,7 @@ impl Ui {
     /// restarts when the profile is saved. Returns `true` when the
     /// selection changed.
     pub fn course_nav(&mut self, key: &str, title: &str, modules: &[(&str, &[&str])], selected: &mut usize) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let vp = self.viewport();
         let theme = self.theme;
         let font = theme.font;

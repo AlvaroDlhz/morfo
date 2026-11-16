@@ -69,6 +69,17 @@ impl Theme {
         self
     }
 
+    /// The same theme with every size (text included) multiplied by
+    /// `factor`.
+    pub fn scaled(mut self, factor: f32) -> Theme {
+        self.font *= factor;
+        self.control *= factor;
+        self.pad *= factor;
+        self.gap *= factor;
+        self.radius *= factor;
+        self
+    }
+
     pub fn with_accent(mut self, accent: Color) -> Theme {
         self.palette[ACCENT] = accent;
         self

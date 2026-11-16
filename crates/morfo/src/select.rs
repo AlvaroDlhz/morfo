@@ -17,7 +17,7 @@ impl Ui {
     /// Check box with its label. The mark is drawn stroke by stroke.
     /// Returns `true` when the user toggled it.
     pub fn checkbox(&mut self, key: &str, label: &str, value: &mut bool) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let font = self.theme.font;
         let target = self.alloc(Vec2::new(BOX + 10.0 + self.text.width(label, font), (font * LINE_HEIGHT).max(BOX)));
         let (r, life) = self.enter(id, target, Smooth);
@@ -50,7 +50,7 @@ impl Ui {
     /// One option of an exclusive group: selected while `*value == this`.
     /// Returns `true` when the user picked it.
     pub fn radio(&mut self, key: &str, label: &str, value: &mut usize, this: usize) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let font = self.theme.font;
         let target = self.alloc(Vec2::new(BOX + 10.0 + self.text.width(label, font), (font * LINE_HEIGHT).max(BOX)));
         let (r, life) = self.enter(id, target, Smooth);
@@ -76,7 +76,7 @@ impl Ui {
     /// A small pill that stays on or off (filters, tags). Returns `true`
     /// when the user toggled it.
     pub fn chip(&mut self, key: &str, label: &str, value: &mut bool) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let variant = if *value { Variant::Soft } else { Variant::Outline };
         let clicked = self.button_id(id, label, variant, Size::Sm).clicked;
         if clicked {
@@ -88,7 +88,7 @@ impl Ui {
     /// Whole number with − and + buttons, kept within `min..=max`. The
     /// digits roll like an odometer. Returns `true` when the value changed.
     pub fn stepper(&mut self, key: &str, value: &mut i32, min: i32, max: i32) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let h = (self.theme.control * 0.9).round();
         let value_w = 52.0;
         let target = self.alloc(Vec2::new(h * 2.0 + value_w, h));
@@ -138,26 +138,87 @@ impl Ui {
     }
 
     /// Stacked sections of which at most one is open. `f(ui, i)` builds the
-    /// body of section `i` (only while it is visible).
-    pub fn accordion(&mut self, key: &str, titles: &[&str], open: &mut Option<usize>, mut f: impl FnMut(&mut Ui, usize)) {
-        let id = self.id(key);
+    /// body of section `i` (only while it is visible); keys in it are
+    /// namespaced under that section.
+    pub fn accordion(&mut self, key: &str, titles: &[&str], open: &mut Option<usize>, f: impl FnMut(&mut Ui, usize)) {
         let font = self.theme.font;
-        for (i, title) in titles.iter().enumerate() {
+        self.accordion_impl(
+            key,
+            titles,
+            open,
+            |ui, i, r, t, hover, a| {
+                let ink = ui.pal[MUTED].mix(ui.pal[TEXT], (t + hover).clamp(0.0, 1.0));
+                ui.draw.add_text(Vec2::new(r.x + 12.0, r.y + (r.h - font * LINE_HEIGHT) * 0.5), font, ink.fade(a), titles[i]);
+                None
+            },
+            f,
+        );
+    }
+
+    /// Like [`accordion`](Self::accordion), but the header of each section
+    /// shows what `header(ui, i, open)` builds (an icon, a title and a
+    /// count, a subtitle under it), laid out as a row. `names` are the
+    /// sections' names for screen readers and habits. The header grows to
+    /// fit its content.
+    pub fn accordion_with(
+        &mut self,
+        key: &str,
+        names: &[&str],
+        open: &mut Option<usize>,
+        mut header: impl FnMut(&mut Ui, usize, bool),
+        body: impl FnMut(&mut Ui, usize),
+    ) {
+        let current = *open;
+        self.accordion_impl(
+            key,
+            names,
+            open,
+            |ui, i, r, _, _, _| {
+                let hid = ui.scope.child("morfo-cabecera").with(i as u64);
+                let h = ui.sizes.get(&hid).map_or(0.0, |s| s.y);
+                ui.next_width = Some((r.w - 52.0).max(0.0));
+                let origin = Vec2::new(r.x + 12.0, r.y + ((r.h - h) * 0.5).max(0.0));
+                let gap = ui.theme.gap * 0.6;
+                let section = ui.scope.with(i as u64);
+                let (_, size) = ui
+                    .group(hid, crate::ui::Dir::Row, Vec2::ZERO, gap, Some(origin), |ui| ui.within(section, |ui| header(ui, i, current == Some(i))));
+                Some(size.y + 16.0)
+            },
+            body,
+        );
+    }
+
+    /// What both accordions share. `head(ui, i, rect, open, hover, alpha)`
+    /// paints header `i` and may return the height it wants.
+    fn accordion_impl(
+        &mut self,
+        key: &str,
+        names: &[&str],
+        open: &mut Option<usize>,
+        mut head: impl FnMut(&mut Ui, usize, Rect, f32, f32, f32) -> Option<f32>,
+        mut f: impl FnMut(&mut Ui, usize),
+    ) {
+        let id = self.declare(key);
+        for (i, name) in names.iter().enumerate() {
             let header = id.with(i as u64);
-            let target = self.alloc(Vec2::new(self.available_width(), self.theme.control));
+            let want = self.sizes.get(&header.child("morfo-alto")).map_or(0.0, |s| s.y);
+            let target = self.alloc(Vec2::new(self.available_width(), self.theme.control.max(want)));
             let (r, life) = self.enter(header, target, Smooth);
             let hit = self.hit(header, r);
-            self.describe(header, Role::Button, title, r, None, Some(*open == Some(i)));
+            self.describe(header, Role::Button, name, r, None, Some(*open == Some(i)));
             if hit.clicked {
                 *open = if *open == Some(i) { None } else { Some(i) };
-                self.learn(header, title);
+                self.learn(header, name);
             }
             let is_open = *open == Some(i);
             let (hover, _, t) = self.drive3(header, hit.hovered, hit.held, is_open as u8 as f32, Smooth);
             let a = self.alpha * life;
             self.draw.rect(r, 10.0, self.pal[TEXT].with_alpha(0.07 * hover * a));
             let ink = self.pal[MUTED].mix(self.pal[TEXT], (t + hover).clamp(0.0, 1.0));
-            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (r.h - font * LINE_HEIGHT) * 0.5), font, ink.fade(a), title);
+            let wanted = self.within(id, |ui| head(ui, i, r, t, hover, a));
+            if let Some(h) = wanted {
+                self.sizes.insert(header.child("morfo-alto"), Vec2::new(0.0, h));
+            }
             // Chevron: ">" when closed turns into "v" when open.
             let c = Vec2::new(r.right() - 20.0, r.center().y);
             let turn =
@@ -168,7 +229,7 @@ impl Ui {
             self.reveal_id(header.child("body"), is_open, |ui| {
                 ui.row(|ui| {
                     ui.space(12.0);
-                    ui.column(|ui| f(ui, i));
+                    ui.column(|ui| ui.within(header, |ui| f(ui, i)));
                 });
             });
         }

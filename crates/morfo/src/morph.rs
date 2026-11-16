@@ -91,7 +91,7 @@ impl Ui {
     /// # ui.end();
     /// ```
     pub fn morph(&mut self, key: &str, form: impl Hash, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let form = {
             let mut h = std::collections::hash_map::DefaultHasher::new();
             form.hash(&mut h);
@@ -99,6 +99,7 @@ impl Ui {
         };
         let mut st = self.morphs.remove(&id).unwrap_or_default();
         let n = self.nodes.entry(id).or_insert_with(Node::new);
+        n.reframe(self.frame, self.shift);
         let absent = n.touch(self.frame);
         let changed = !absent && st.form != form;
         st.form = form;
@@ -152,19 +153,8 @@ impl Ui {
         if let Some(shell) = blend_shells(old_shell, new_shell, t) {
             emit(&mut self.draw, shell);
         }
-        self.replay(&st.was, r, fade_out, st.was.shell);
-        for (i, &cmd) in new.iter().enumerate() {
-            if Some(i) == st.now.shell {
-                continue;
-            }
-            match map(cmd, target, r, fade_in) {
-                DrawCmd::Polygon { start, len, color } => {
-                    let mapped: Vec<Vec2> = self.draw.points(start, len).iter().map(|&p| map_point(p, target, r)).collect();
-                    self.draw.polygon(&mapped, color);
-                }
-                cmd => emit(&mut self.draw, cmd),
-            }
-        }
+        self.replay(&st.was, r, fade_out, st.was.shell, &[]);
+        self.emit_mapped(&new, st.now.shell, target, r, fade_in);
         self.morph_buf = new;
         self.morphs.insert(id, st);
     }
@@ -173,9 +163,11 @@ impl Ui {
 impl Ui {
     /// Draws a snapshot again, stretched from where it was onto `to` and
     /// faded by `fade`, skipping command `skip`.
-    pub(crate) fn replay(&mut self, snap: &Snapshot, to: Rect, fade: f32, skip: Option<usize>) {
+    /// Commands that lie inside one of `holes` (in the snapshot's own
+    /// coordinates) are left out.
+    pub(crate) fn replay(&mut self, snap: &Snapshot, to: Rect, fade: f32, skip: Option<usize>, holes: &[Rect]) {
         for (i, &cmd) in snap.cmds.iter().enumerate() {
-            if Some(i) == skip {
+            if Some(i) == skip || (!holes.is_empty() && in_hole(&cmd, &snap.points, holes)) {
                 continue;
             }
             match map(cmd, snap.bounds, to, fade) {
@@ -194,6 +186,53 @@ impl Ui {
             }
         }
     }
+}
+
+impl Ui {
+    /// Draws `cmds` (recorded inside `from`, still pointing into this
+    /// frame's text and points) proportionally inside `to`, faded by `fade`,
+    /// skipping command `skip`.
+    pub(crate) fn emit_mapped(&mut self, cmds: &[DrawCmd], skip: Option<usize>, from: Rect, to: Rect, fade: f32) {
+        for (i, &cmd) in cmds.iter().enumerate() {
+            if Some(i) == skip {
+                continue;
+            }
+            match map(cmd, from, to, fade) {
+                DrawCmd::Polygon { start, len, color } => {
+                    let mapped: Vec<Vec2> = self.draw.points(start, len).iter().map(|&p| map_point(p, from, to)).collect();
+                    self.draw.polygon(&mapped, color);
+                }
+                cmd => emit(&mut self.draw, cmd),
+            }
+        }
+    }
+
+    /// Moves, stretches and fades, in place, everything drawn in the
+    /// current layer since `mark`: what was inside `from` lands inside `to`.
+    pub(crate) fn transform_from(&mut self, mark: usize, from: Rect, to: Rect, fade: f32) {
+        self.draw.map_from(mark, |c| map(c, from, to, fade), |p| map_point(p, from, to));
+    }
+}
+
+/// Whether `cmd` lies entirely inside one of `holes`. Clips never do: they
+/// must stay balanced.
+fn in_hole(cmd: &DrawCmd, points: &[Vec2], holes: &[Rect]) -> bool {
+    let r = match *cmd {
+        DrawCmd::Rect { rect, .. } | DrawCmd::Shadow { rect, .. } => rect,
+        DrawCmd::Text { pos, size, .. } => Rect::new(pos.x, pos.y, 1.0, size),
+        DrawCmd::Line { from, to, .. } => Rect::new(from.x.min(to.x), from.y.min(to.y), (from.x - to.x).abs(), (from.y - to.y).abs()),
+        DrawCmd::Polygon { start, len, .. } => {
+            let pts = &points[start as usize..(start + len) as usize];
+            let (x0, x1) = pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.x), hi.max(p.x)));
+            let (y0, y1) = crate::draw::bounds_y(pts);
+            Rect::new(x0, y0, x1 - x0, y1 - y0)
+        }
+        _ => return false,
+    };
+    holes.iter().any(|h| {
+        let h = h.inset(-2.0);
+        r.x >= h.x && r.y >= h.y && r.right() <= h.right() && r.bottom() <= h.bottom()
+    })
 }
 
 /// The largest visible rectangle covering most of `bounds`: the background

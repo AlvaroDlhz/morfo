@@ -179,9 +179,33 @@ impl Node {
         self.rect.tick(k) | self.life.tick(life)
     }
 
+    /// Whether the node was declared in the previous frame (or already in
+    /// this one).
+    pub fn present(&self, frame: u64) -> bool {
+        self.seen + 1 >= frame
+    }
+
+    /// Carries the node along when its frame of reference moved by `dy` this
+    /// frame (see `Ui::shift`). Call it once per frame, before placing it.
+    pub fn reframe(&mut self, frame: u64, dy: f32) {
+        if dy != 0.0 && self.present(frame) {
+            self.rect.translate(Vec2::new(0.0, dy));
+        }
+    }
+
     /// First frame of this node's life: style values should snap, not animate.
     pub fn fresh(&self) -> bool {
         self.age <= 1
+    }
+
+    /// Makes a node that is about to be declared for the first time start
+    /// at `from` and travel to its place, instead of appearing there (a tag
+    /// flying out of the field it was typed in).
+    pub fn launch(&mut self, frame: u64, from: Rect) {
+        self.rect.snap(from);
+        self.life.snap(0.0);
+        self.age = 2;
+        self.seen = frame;
     }
 }
 
@@ -267,6 +291,50 @@ pub struct Ui {
     /// measured its content: the offset and for how many more frames.
     pub(crate) scroll_restore: IdMap<(f32, u8)>,
     pub(crate) notices: Vec<crate::overlay::Notice>,
+    /// Shortcut fields declared this frame (they take every key).
+    pub(crate) capture_ids: Vec<Id>,
+    /// A key pressed with Ctrl, given by the host with [`Ui::chord`].
+    pub(crate) chord: Option<String>,
+    /// Cards being dragged on a board.
+    pub(crate) drags: IdMap<crate::panes::Drag>,
+    /// What each chart's hover card says, kept while it fades out.
+    pub(crate) tips: IdMap<Vec<(Color, String)>>,
+    /// Scroll areas being laid out, innermost last.
+    pub(crate) scrolls: Vec<crate::scrolling::ScrollCtx>,
+    /// Elements that came into view so far this frame (they enter one after
+    /// another).
+    pub(crate) reveal_batch: u32,
+    /// Key (unscoped) of the anchor a scroll area should travel to, set by
+    /// [`Ui::scroll_to`].
+    pub(crate) scroll_request: Option<Id>,
+    /// What each transition showed, and what it is leaving.
+    pub(crate) swaps: IdMap<crate::transition::Swap>,
+    /// Where the shared elements that took off this frame were.
+    pub(crate) hero_launches: Vec<Rect>,
+    /// A transition changed view this frame: shared elements may take off.
+    pub(crate) collect_heroes: bool,
+    /// Room taken at the top of the scroll view by pinned headers.
+    pub(crate) pin_inset: f32,
+    /// Seconds since the previous frame.
+    pub(crate) dt: f32,
+    /// Keys declared this frame and the last, with the element each one
+    /// became (for [`Ui::find`]).
+    declared: Vec<(Id, Id)>,
+    declared_prev: Vec<(Id, Id)>,
+    /// Inside [`Ui::enabled`]`(false, …)`: nothing responds.
+    pub(crate) disabled: bool,
+    /// Variant of the buttons that do not name one ([`Ui::with_variant`]).
+    pub(crate) style_variant: Option<crate::widgets::Variant>,
+    /// New elements appear at once instead of entering (inside a shared
+    /// element, which already travels).
+    pub(crate) skip_entrance: bool,
+    /// How far, this frame, the frame of reference of what is being laid
+    /// out moved vertically on screen (the content of a scroll area as it
+    /// scrolls). Elements move with it rigidly instead of springing after it.
+    pub(crate) shift: f32,
+    /// What lies behind the content being laid out, as a palette index: the
+    /// window's background, a card's surface, a panel's.
+    pub(crate) ground: usize,
 }
 
 impl Ui {
@@ -335,6 +403,25 @@ impl Ui {
             scroll_ids: Vec::new(),
             scroll_restore: IdMap::default(),
             notices: Vec::new(),
+            capture_ids: Vec::new(),
+            chord: None,
+            drags: IdMap::default(),
+            tips: IdMap::default(),
+            scrolls: Vec::new(),
+            reveal_batch: 0,
+            scroll_request: None,
+            swaps: IdMap::default(),
+            hero_launches: Vec::new(),
+            collect_heroes: false,
+            pin_inset: 0.0,
+            dt: 0.0,
+            declared: Vec::new(),
+            declared_prev: Vec::new(),
+            disabled: false,
+            style_variant: None,
+            skip_entrance: false,
+            shift: 0.0,
+            ground: BG,
         }
     }
 
@@ -418,6 +505,19 @@ impl Ui {
         self.focus.is_some_and(|f| self.text_ids.contains(&f))
     }
 
+    /// Whether a shortcut field is waiting for a key combination: while it
+    /// is, the host should hand it Ctrl+key with [`chord`](Self::chord)
+    /// instead of running its own shortcuts.
+    pub fn wants_keys(&self) -> bool {
+        self.focus.is_some_and(|f| self.capture_ids.contains(&f))
+    }
+
+    /// A key pressed together with Ctrl (`"k"`, `"F5"`), which a host does
+    /// not send as text. Only a focused shortcut field uses it.
+    pub fn chord(&mut self, key: &str) {
+        self.chord = Some(key.to_string());
+    }
+
     /// Modifier keys currently held (Shift extends text selections).
     pub fn set_modifiers(&mut self, mods: Modifiers) {
         self.mods = mods;
@@ -468,6 +568,7 @@ impl Ui {
         // step would skip the first visible frames of the next animation.
         let dt = if self.instant { 1e3 } else { ((now - self.now) as f32).clamp(0.0, 0.05) };
         self.now = now;
+        self.dt = dt;
         self.frame += 1;
         self.viewport = viewport;
         self.steps = [
@@ -494,6 +595,7 @@ impl Ui {
         self.blockers.clear();
         self.focusables.clear();
         self.text_ids.clear();
+        self.capture_ids.clear();
         self.access.clear();
         self.ime_rect = None;
         self.focus_rect = None;
@@ -502,6 +604,16 @@ impl Ui {
         self.dismiss = false;
         self.wake = f64::INFINITY;
         self.top_inset = 0.0;
+        self.scrolls.clear();
+        self.reveal_batch = 0;
+        self.pin_inset = 0.0;
+        self.collect_heroes = false;
+        self.shift = 0.0;
+        self.ground = BG;
+        self.disabled = false;
+        self.style_variant = None;
+        std::mem::swap(&mut self.declared, &mut self.declared_prev);
+        self.declared.clear();
         self.layouts.clear();
         self.scope = Id::ROOT;
         self.alpha = 1.0;
@@ -552,6 +664,7 @@ impl Ui {
             || !self.keys.is_empty()
             || !self.typed.is_empty()
             || !self.pasted.is_empty()
+            || self.chord.is_some()
             || !self.access_clicks.is_empty();
         self.input.pressed = false;
         self.input.released = false;
@@ -559,6 +672,7 @@ impl Ui {
         self.keys.clear();
         self.typed.clear();
         self.pasted.clear();
+        self.chord = None;
         self.access_clicks.clear();
         if !self.input.down {
             self.active = None;
@@ -568,6 +682,7 @@ impl Ui {
             self.nodes.retain(|_, n| n.seen + 256 >= frame);
             let nodes = &self.nodes;
             self.morphs.retain(|id, _| nodes.contains_key(id));
+            self.swaps.retain(|id, _| nodes.contains_key(id));
         }
         let wake_in = self.wake.is_finite().then(|| (self.wake - self.now).max(0.0) as f32);
         Frame { animating: self.animating || again, wake_in }
@@ -590,11 +705,52 @@ impl Ui {
     }
 
     /// Runs `f` with all keys namespaced under `key` (for repeated groups).
+    /// Containers with a key (`card`, `dialog`, `scroll`…) already do this
+    /// for their content.
     pub fn scope(&mut self, key: &str, f: impl FnOnce(&mut Ui)) {
-        let saved = self.scope;
-        self.scope = saved.child(key);
-        f(self);
+        let id = self.scope.child(key);
+        self.within(id, f);
+    }
+
+    /// Runs `f` with keys namespaced under `id`: the content of a component
+    /// belongs to it, so the same component can be repeated without its
+    /// insides colliding.
+    pub(crate) fn within<R>(&mut self, id: Id, f: impl FnOnce(&mut Ui) -> R) -> R {
+        let saved = std::mem::replace(&mut self.scope, id);
+        let out = f(self);
         self.scope = saved;
+        out
+    }
+
+    /// Id of `key` in the current scope, for the element being declared
+    /// with it (remembered for [`find`](Self::find)).
+    pub(crate) fn declare(&mut self, key: &str) -> Id {
+        let id = self.scope.child(key);
+        self.declared.push((Id::new(key), id));
+        id
+    }
+
+    /// The element declared with `key` in the last frame, wherever it was
+    /// nested: inside a card, a scroll area or a dialog its id is not
+    /// `ui.id(key)` but that of its container's `.child(key)`. If several
+    /// elements used `key`, it is the first one; [`find_all`](Self::find_all)
+    /// gives them all, in order.
+    pub fn find(&self, key: &str) -> Option<Id> {
+        self.find_all(key).into_iter().next()
+    }
+
+    /// Every element declared with `key` in the last frame, in order.
+    /// Called while building a frame, what this frame has declared so far
+    /// comes first.
+    pub fn find_all(&self, key: &str) -> Vec<Id> {
+        let k = Id::new(key);
+        let mut out: Vec<Id> = self.declared.iter().filter(|(d, _)| *d == k).map(|(_, id)| *id).collect();
+        for &(d, id) in &self.declared_prev {
+            if d == k && !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out
     }
 
     /// On-screen rectangle of an element, if it exists.
@@ -632,6 +788,9 @@ impl Ui {
     /// Whether the pointer is over `rect` as far as the current layer is
     /// concerned: inside the clip and not covered by a panel above.
     pub(crate) fn pointer_in(&self, rect: Rect) -> bool {
+        if self.disabled {
+            return false;
+        }
         let layer = self.draw.layer() as u8;
         self.input.pointer.is_some_and(|p| {
             rect.contains(p) && self.clip.is_none_or(|c| c.contains(p)) && !self.blockers_prev.iter().any(|(l, r)| *l > layer && r.contains(p))
@@ -642,6 +801,13 @@ impl Ui {
     /// element becomes focusable: Tab reaches it, and Enter or Space
     /// activate it while it has the focus.
     pub(crate) fn hit(&mut self, id: Id, rect: Rect) -> Hit {
+        if self.disabled {
+            // Disabled: not reachable with Tab, and it lets go of the focus.
+            if self.focus == Some(id) {
+                self.focus = None;
+            }
+            return Hit { hovered: false, held: false, clicked: false, released: false };
+        }
         self.focusables.push(id);
         let mut hit = self.hit_inert(id, rect);
         if self.input.pressed && self.active == Some(id) && self.focus != Some(id) {

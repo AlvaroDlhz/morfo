@@ -101,7 +101,7 @@ impl Ui {
     /// view (the wheel scrolls it too). Selection, clipboard and input
     /// methods work as in [`text_field`](Self::text_field).
     pub fn text_area(&mut self, key: &str, value: &mut String, placeholder: &str, size: Vec2) -> TextEdit {
-        let id = self.id(key);
+        let id = self.declare(key);
         let (font, pad) = (self.theme.font, self.theme.pad * 0.7);
         let lh = font * LINE_HEIGHT;
         let target = self.alloc(size);

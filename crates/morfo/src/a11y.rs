@@ -39,6 +39,8 @@ pub struct AccessNode {
     pub checked: Option<bool>,
     /// On-screen rectangle in logical pixels.
     pub rect: Rect,
+    /// Inside [`Ui::enabled`]`(false, …)`: shown, but it does not respond.
+    pub disabled: bool,
 }
 
 impl Ui {
@@ -51,7 +53,8 @@ impl Ui {
     /// Adds an element to this frame's accessibility description.
     pub(crate) fn describe(&mut self, id: Id, role: Role, label: &str, rect: Rect, value: Option<&str>, checked: Option<bool>) {
         if self.a11y_on {
-            self.access.push(AccessNode { id, role, label: label.to_string(), value: value.map(str::to_string), checked, rect });
+            let disabled = self.disabled;
+            self.access.push(AccessNode { id, role, label: label.to_string(), value: value.map(str::to_string), checked, rect, disabled });
         }
     }
 

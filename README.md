@@ -23,6 +23,14 @@ programa pueden acabar viendo interfaces distintas.
 | ![dialogo](docs/dialogo.png) | ![seleccion](docs/seleccion.png) |
 | **Un botón mutando en tarjeta** | **Mutado según el uso** |
 | ![mutacion](docs/mutacion.png) | ![mutacion-uso](docs/mutacion-uso.png) |
+| **Gráficos que viajan a sus datos** | **Calendario de un selector de fecha** |
+| ![graficos](docs/graficos.png) | ![calendario](docs/calendario.png) |
+| **Panel lateral sobre el contenido** | **Tablero: una tarjeta en la mano** |
+| ![panel-lateral](docs/panel-lateral.png) | ![tablero](docs/tablero.png) |
+| **Paralaje: cada capa a su velocidad** | **Una foto volando hasta su detalle** |
+| ![paralaje](docs/paralaje.png) | ![transicion](docs/transicion.png) |
+| **Contenido propio en pestañas, menús y tablas** | |
+| ![composicion](docs/composicion.png) | |
 
 ## Ideas clave
 
@@ -37,6 +45,20 @@ programa pueden acabar viendo interfaces distintas.
   color) mientras el contenido se funde, y los vecinos se apartan al mismo
   ritmo. La «forma» puede ser cualquier valor con `Hash`, incluido el peso que
   el uso le ha dado a un elemento.
+- **Componentes dentro de componentes.** Un contenedor con clave (`card`,
+  `dialog`, `scroll`, `accordion`, `transition`…) es dueño de lo que contiene:
+  sus claves quedan bajo la suya, así que un componente hecho de otros se
+  repite sin que sus piezas choquen, y `ui.find(clave)` encuentra algo
+  anidado sin escribir la ruta. Cualquier contenido puede ser un botón
+  (`pressable`), apagarse entero (`enabled`) o heredar tamaño, acento y
+  variante (`with_size`, `with_accent`, `with_variant`).
+- **Scroll y transiciones.** Lo que hay dentro de un área de scroll se mueve
+  con ella como una sola pieza, y puede reaccionar a ella: entrar al verse
+  (`scroll_reveal`, escalonado si llegan varios), contar (`count_up`), moverse
+  a otra velocidad (`parallax`) o quedarse fijo arriba (`sticky_section`).
+  `ui.transition(clave, vista, estilo, …)` cambia de vista con una de siete
+  coreografías, en la dirección del avance, y lo que dos vistas comparten
+  (`hero`) vuela de un sitio a otro.
 - **Muelles analíticos.** La solución cerrada del muelle amortiguado es lineal
   en posición y velocidad, así que sus 4 coeficientes se calculan una vez por
   frame y cada valor animado avanza con 4 multiplicaciones. Exacto a cualquier
@@ -103,16 +125,21 @@ pintar para que el primero que se vea esté ya quieto y en su sitio.
 | Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
 | Controles | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (rango con dos manijas), `knob` (perilla), `xy_pad` (pad de dos ejes), `rating` (estrellas), `swatches` (muestras de color) |
 | Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
-| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll`, `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida) |
+| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll` (rebota al pasar de un extremo), `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida), `splitter` (dos paneles con un divisor que se arrastra) |
 | Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `notice` (aviso fijo en una esquina mientras se declare: trabajo en curso, sin conexión, un error), `close` |
-| Navegación | `course_nav` (temario de curso en el borde izquierdo: módulos, lecciones numeradas en una línea de tiempo y progreso que se recuerda), `side_nav` (índice simple), `search` (lupa que se despliega en un buscador con resultados) |
+| Navegación | `course_nav` (temario de curso en el borde izquierdo: módulos, lecciones numeradas en una línea de tiempo y progreso que se recuerda), `side_nav` (índice simple), `search` (lupa que se despliega en un buscador con resultados), `tabs` (subrayado que salta entre pestañas), `breadcrumbs` (el centro se pliega en «…» si no cabe), `tree` (ramas que se despliegan; recuerda cuáles están abiertas), `pagination`, `drawer` (panel que entra por un lado de la ventana) |
 | Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
-| Entrada | `text_field` y `text_area` (selección con ratón y Mayús, Ctrl+A/C/X/V, métodos de entrada; el área es multilínea con ajuste y scroll), `select` (desplegable), `combobox` (sugerencias sin distinguir tildes) |
-| Datos | `table` (ordenable por columnas; las filas viajan al ordenar), `reorderable` (lista que se reordena arrastrando) |
+| Entrada | `text_field` y `text_area` (selección con ratón y Mayús, Ctrl+A/C/X/V, métodos de entrada; el área es multilínea con ajuste y scroll), `select` (desplegable), `combobox` (sugerencias sin distinguir tildes), `date_picker` (calendario del mes, con el tipo `Date`), `color_picker` (cuadrado de saturación y brillo, barra de tono), `tag_input` (lo escrito se convierte en etiquetas), `multi_select` (varias opciones con buscador), `shortcut_input` (graba una combinación de teclas como `Shortcut`; el programa le pasa Ctrl+tecla con `chord` mientras `wants_keys`) |
+| Datos | `table` (ordenable por columnas; las filas viajan al ordenar), `reorderable` (lista que se reordena arrastrando), `kanban` (tablero de columnas; las tarjetas se arrastran entre ellas) |
+| Gráficos | `bar_chart`, `line_chart` (varias series), `sparkline` (tendencia en una línea), `heatmap`, `gauge`: valores y escala son muelles, y al pasar el ratón se ve cada valor |
+| Estado | `skeleton` (líneas grises con brillo que se transforman en el contenido al cargar), `badge` y `badge_on` (contador que salta al cambiar y se va en cero), `steps` (procesos por pasos) |
 | Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions`, `predicted_action` (ofrece el siguiente paso habitual), `adaptive_dashboard` (inicio que se reordena y agranda lo más usado), `command_palette`, `set_adaptive_density` (más compacta cuanto más se usa), `habits`, `why` |
 | Accesibilidad | `set_accessibility`, `access_nodes`, `access_click`, `access_focus` |
 | Dibujo | `DrawList::polygon`, `DrawList::arc`, rectángulos, líneas y texto (dentro de `canvas`) |
 | Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
+| Scroll | `scroll_reveal` (entra al verse con `Reveal::Fade`, `Rise`, `Left`, `Right`, `Grow` o `Wipe`; los que llegan juntos, uno tras otro), `count_up` (número que cuenta desde cero al verse), `parallax` (capas a distintas velocidades), `sticky_section` (cabecera fija hasta que la siguiente la empuja; se anidan), `anchor` y `scroll_to` (viaje con muelle hasta una sección), `scroll_progress` y `scroll_linked` (valores ligados a la posición) |
+| Composición | `pressable` (cualquier contenido como un botón; los controles de dentro siguen siendo suyos), `enabled` (apaga todo lo que contiene: atenuado, sin puntero ni teclado, anunciado como desactivado), `tabs_with`, `menu_with`, `table_with` y `accordion_with` (cada pestaña, opción, celda o cabecera muestra lo que construyas), `with_size`, `with_accent` y `with_variant` (estilo que hereda lo de dentro), `find` y `find_all` (el elemento declarado con una clave, esté donde esté) |
+| Transiciones | `transition` (cambio de vista con `Transition::Fade`, `Slide`, `Shift`, `Push`, `Zoom`, `Flip` o `Rise`, en la dirección del avance), `hero` (elemento compartido que vuela de una vista a otra) |
 
 Los flotantes se dibujan en capas superiores, bloquean lo que tapan y animan
 también su salida. Para adaptar componentes propios: `ui.affinity(key)`,
@@ -189,9 +216,11 @@ La misma documentación funciona en el navegador:
 Necesita `rustup target add wasm32-unknown-unknown` y `wasm-bindgen-cli` en la
 versión de `Cargo.lock`.
 
-La documentación es una app hecha con morfo. Tiene once páginas (Inicio,
-Botones, Controles, Selección, Cajas, Formas, Flotantes, Entrada, Adaptativo,
-Mutación, Datos), ordenadas como un curso de cuatro módulos. El temario vive
+La documentación es una app hecha con morfo. Tiene dieciocho páginas (Inicio,
+Botones, Controles, Selección, Cajas, Composición, Formas, Entrada,
+Formularios, Flotantes, Estado y paneles, Navegación, Datos, Gráficos,
+Adaptativo, Mutación, Scroll y Transiciones), ordenadas como un curso de cinco módulos;
+al cambiar de lección, la nueva llega desde el lado hacia el que se avanza. El temario vive
 en el borde izquierdo: se despliega al acercar el cursor, marca las lecciones
 vistas y recuerda el progreso. Arriba a la derecha, una lupa se despliega en
 un buscador de lecciones y acciones (Ctrl+K en escritorio), y al final de
@@ -258,8 +287,10 @@ repintado completo.
 - La tabla dibuja todas sus filas; para miles de filas hace falta paginarla.
 - El scroll es vertical y con rueda (sin arrastrar la barra); dibuja solo lo
   visible, pero recorre el layout de todo el contenido.
-- Durante una mutación, los controles de la forma nueva ya responden en su
-  posición final, aunque aún se estén dibujando a medio camino.
+- Durante una mutación, una transición o una entrada con `scroll_reveal`, los
+  controles nuevos ya responden en su posición final, aunque aún se estén
+  dibujando a medio camino. La vista que se va en una transición es solo una
+  imagen: no responde, y lo que tenía en capas flotantes desaparece al momento.
 - `title_bar` no mueve ni cierra la ventana por sí misma: devuelve lo que
   pidió el usuario y el programa lo hace. Arrastrar y redimensionar dependen
   del gestor de ventanas.

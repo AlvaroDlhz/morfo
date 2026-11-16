@@ -76,7 +76,7 @@ impl Ui {
     ///
     /// Call it first in the frame: it moves the rest of the layout down.
     pub fn title_bar(&mut self, key: &str, title: &str, maximized: bool, f: impl FnOnce(&mut Ui)) -> TitleBar {
-        let id = self.id(key);
+        let id = self.declare(key);
         let vp = self.viewport();
         let theme = self.theme;
         let h = (theme.control * 1.05).round();
@@ -148,7 +148,7 @@ impl Ui {
         let gap = theme.gap;
         // Up to the window buttons, so `ui.fill()` puts content at the right.
         self.next_width = Some((vp.x - bw * 3.0 - gap - x0).max(0.0));
-        self.group(content_id, Dir::Row, Vec2::ZERO, gap, Some(origin), f);
+        self.group(content_id, Dir::Row, Vec2::ZERO, gap, Some(origin), |ui| ui.within(id, f));
         self.scope = saved;
 
         // A press on an empty part of the bar moves the window; two in a

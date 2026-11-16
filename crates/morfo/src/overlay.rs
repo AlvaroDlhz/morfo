@@ -83,7 +83,9 @@ impl Ui {
             ui.clip = Some(panel);
             // Content appears once the panel has opened enough to hold it.
             ui.alpha = smoothstep((pc - 0.25) / 0.75);
+            let ground = std::mem::replace(&mut ui.ground, RAISED);
             let (_, mut content) = ui.group(id, Dir::Column, Vec2::splat(cfg.inset), cfg.gap, Some(pos), f);
+            ui.ground = ground;
             if let Some(w) = cfg.width {
                 content.x = w;
                 ui.sizes.insert(id, content);
@@ -114,11 +116,11 @@ impl Ui {
     /// button that opens it) and shrinks back into it when closed. Clicking
     /// outside, pressing Escape or calling [`Ui::close`] sets `open` to false.
     pub fn dialog(&mut self, key: &str, trigger: &str, open: &mut bool, width: f32, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let vp = self.viewport();
         let from = self.rect_of(self.id(trigger)).unwrap_or(Rect::new(vp.x * 0.5, vp.y * 0.5, 0.0, 0.0));
         let cfg = Floating { from, pos: Vec2::ZERO, center: true, width: Some(width), inset: self.theme.pad * 1.2, gap: self.theme.gap, dim: true };
-        if self.floating(id, *open, cfg, f) {
+        if self.floating(id, *open, cfg, |ui| ui.within(id, f)) {
             *open = false;
         }
     }
@@ -126,7 +128,7 @@ impl Ui {
     /// A button that unfolds a list of options. `items` are `(key, label)`;
     /// returns the index of the option chosen this frame.
     pub fn menu(&mut self, key: &str, label: &str, items: &[(&str, &str)]) -> Option<usize> {
-        let id = self.id(key);
+        let id = self.declare(key);
         let (shown, anchor) = self.menu_trigger(id, label);
         let width = self.menu_width(anchor, items.iter().map(|(_, l)| *l));
         let mut picked = None;
@@ -137,6 +139,56 @@ impl Ui {
                 }
             }
         });
+        if (picked.is_some() || dismissed) && self.open == Some(id) {
+            self.open = None;
+        }
+        picked
+    }
+
+    /// Like [`menu`](Self::menu), but each option shows what `f(ui, i)`
+    /// builds (an icon and a word, a shortcut on the right, a line of help
+    /// under it), laid out as a row. `items` are `(key, name)`: the name is
+    /// for screen readers and habits. The panel is as wide as its widest
+    /// option, and the keys inside option `i` are namespaced under it.
+    pub fn menu_with(&mut self, key: &str, label: &str, items: &[(&str, &str)], mut f: impl FnMut(&mut Ui, usize)) -> Option<usize> {
+        let id = self.declare(key);
+        let (shown, anchor) = self.menu_trigger(id, label);
+        let wid = id.child("morfo-ancho");
+        let pad = self.theme.pad * 0.8;
+        let width = (self.sizes.get(&wid).map_or(0.0, |s| s.x) + pad * 2.0).max(anchor.w);
+        let mut picked = None;
+        let mut widest = 0.0f32;
+        let dismissed = self.floating(id.child("panel"), shown, self.menu_cfg(anchor), |ui| {
+            for (i, (item, name)) in items.iter().enumerate() {
+                let rid = id.child(item);
+                let cid = rid.child("morfo-contenido");
+                let content = ui.sizes.get(&cid).copied().unwrap_or(Vec2::ZERO);
+                let h = (ui.theme.control * 0.9).round().max(content.y + 14.0);
+                let target = ui.alloc(Vec2::new(width, h));
+                let (r, life) = ui.enter(rid, target, Snappy);
+                let slot = ui.draw.reserve();
+                let gap = ui.theme.gap * 0.6;
+                ui.next_width = Some(width - pad * 2.0);
+                let origin = Vec2::new(r.x + pad, r.y + (r.h - content.y) * 0.5);
+                let (_, size) = ui.group(cid, Dir::Row, Vec2::ZERO, gap, Some(origin), |ui| ui.within(rid, |ui| f(ui, i)));
+                widest = widest.max(size.x);
+                let hit = ui.hit(rid, r);
+                ui.describe(rid, crate::a11y::Role::MenuItem, name, r, None, None);
+                let (hover, _, _) = ui.drive3(rid, hit.hovered || hit.held, hit.held, 0.0, Snappy);
+                let a = ui.alpha * life;
+                let fill = ui.pal[TEXT].with_alpha(0.09 * hover * a);
+                if fill.a > 0.002 {
+                    ui.draw.set(slot, DrawCmd::Rect { rect: r, radius: 10.0, fill, stroke: Color::TRANSPARENT, stroke_width: 0.0 });
+                }
+                if hit.clicked {
+                    ui.learn(rid, name);
+                    picked = Some(i);
+                }
+            }
+        });
+        if shown {
+            self.sizes.insert(wid, Vec2::new(widest, 0.0));
+        }
         if (picked.is_some() || dismissed) && self.open == Some(id) {
             self.open = None;
         }
@@ -241,7 +293,7 @@ impl Ui {
     /// progress, a lost connection, a failed build. Long text wraps, and
     /// changing the text of the same `key` morphs the notice in place.
     pub fn notice(&mut self, key: &str, text: &str) {
-        let (id, frame) = (self.id(key), self.frame);
+        let (id, frame) = (self.declare(key), self.frame);
         match self.notices.iter_mut().find(|n| n.id == id) {
             Some(n) => {
                 if n.text != text {
@@ -370,7 +422,7 @@ impl Ui {
         const EDGE: f32 = 18.0;
         /// Seconds it stays open after the pointer leaves.
         const LINGER: f64 = 0.3;
-        let id = self.id(key);
+        let id = self.declare(key);
         let vp = self.viewport();
         let theme = self.theme;
         let (font, title_font) = (theme.font, theme.font * 1.15);

@@ -290,14 +290,14 @@ impl Ui {
 
     /// A round button with only an icon.
     pub fn icon_button(&mut self, key: &str, icon: Icon, variant: Variant, size: Size) -> Response {
-        let id = self.id(key);
+        let id = self.declare(key);
         let spec = Spec { label: "", icon: Some(icon), show_icon: true, variant, size, busy: false, hold: None, checked: None };
         self.button_core(id, spec).0
     }
 
     /// A button with an icon before its label.
     pub fn button_icon(&mut self, key: &str, icon: Icon, label: &str, variant: Variant, size: Size) -> Response {
-        let id = self.id(key);
+        let id = self.declare(key);
         self.button_icon_id(id, icon, label, variant, size)
     }
 
@@ -309,7 +309,7 @@ impl Ui {
     /// A button that stays pressed. When on, it takes a stronger variant and
     /// a check mark slides in before its label. Returns `true` when flipped.
     pub fn toggle_button(&mut self, key: &str, label: &str, value: &mut bool, variant: Variant, size: Size) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let (off, on) = match variant {
             Variant::Solid | Variant::Soft => (Variant::Soft, Variant::Solid),
             Variant::Outline => (Variant::Outline, Variant::Solid),
@@ -335,7 +335,7 @@ impl Ui {
     /// A button with a busy state: while `loading`, it shrinks into a circle
     /// with a spinner and ignores clicks; then it grows back.
     pub fn loading_button(&mut self, key: &str, label: &str, loading: bool, variant: Variant, size: Size) -> Response {
-        let id = self.id(key);
+        let id = self.declare(key);
         let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: loading, hold: None, checked: None };
         self.button_core(id, spec).0
     }
@@ -344,7 +344,7 @@ impl Ui {
     /// for `seconds`, filling up while pressed and emptying if let go
     /// early. Returns `true` once, the moment the hold completes.
     pub fn hold_button(&mut self, key: &str, label: &str, seconds: f32, variant: Variant, size: Size) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let spec = Spec { label, icon: None, show_icon: false, variant, size, busy: false, hold: Some(seconds), checked: None };
         self.button_core(id, spec).1
     }

@@ -58,7 +58,11 @@ impl Ui {
     pub(crate) fn enter(&mut self, id: Id, target: Rect, kind: SpringKind) -> (Rect, f32) {
         let (k, life) = (self.steps[kind as usize], self.steps[Gentle as usize]);
         let n = self.nodes.entry(id).or_insert_with(Node::new);
+        n.reframe(self.frame, self.shift);
         self.animating |= n.begin(self.frame, target, &k, &life);
+        if self.skip_entrance {
+            n.life.snap(1.0);
+        }
         (n.rect.get(), n.life.get())
     }
 
@@ -113,7 +117,7 @@ impl Ui {
     /// A bare morphing shape: declare the same `key` with another size, radius
     /// or color (or in another place) and it flows into the new form.
     pub fn surface(&mut self, key: &str, size: Vec2, radius: f32, fill: Color) -> Rect {
-        let id = self.id(key);
+        let id = self.declare(key);
         let target = self.alloc(size);
         let (r, life) = self.enter(id, target, Smooth);
         let k = self.steps[Smooth as usize];
@@ -132,7 +136,7 @@ impl Ui {
     /// polygons, arcs and text with the [`DrawList`](crate::DrawList)
     /// methods. Colors from [`Ui::theme`] keep it in step with the theme.
     pub fn canvas(&mut self, key: &str, size: Vec2, f: impl FnOnce(&mut crate::DrawList, Rect)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let target = self.alloc(size);
         let (r, _) = self.enter(id, target, Smooth);
         f(&mut self.draw, r);
@@ -153,14 +157,16 @@ impl Ui {
     /// A raised container of fixed width. Its height follows its content,
     /// fluidly.
     pub fn card_w(&mut self, key: &str, width: f32, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let pad = self.theme.pad;
         let shadow_slot = self.draw.reserve();
         let bg_slot = self.draw.reserve();
         let gap = self.theme.gap;
         // The content wraps and stretches within the card's own width.
         self.next_width = Some((width - 2.0 * pad).max(0.0));
-        let (origin, mut size) = self.group(id, Dir::Column, Vec2::splat(pad), gap, None, f);
+        let ground = std::mem::replace(&mut self.ground, SURFACE);
+        let (origin, mut size) = self.group(id, Dir::Column, Vec2::splat(pad), gap, None, |ui| ui.within(id, f));
+        self.ground = ground;
         size.x = width;
         self.sizes.insert(id, size);
         self.advance(size);
@@ -202,12 +208,15 @@ impl Ui {
 
     // ----- controls --------------------------------------------------------
 
+    /// A button in the inherited variant ([`with_variant`](Self::with_variant);
+    /// `Solid` otherwise), at the inherited size.
     pub fn button(&mut self, key: &str, label: &str) -> Response {
-        self.button_with(key, label, Variant::Solid, Size::Md)
+        let variant = self.style_variant.unwrap_or(Variant::Solid);
+        self.button_with(key, label, variant, Size::Md)
     }
 
     pub fn button_with(&mut self, key: &str, label: &str, variant: Variant, size: Size) -> Response {
-        let id = self.id(key);
+        let id = self.declare(key);
         self.button_id(id, label, variant, size)
     }
 
@@ -218,7 +227,7 @@ impl Ui {
 
     /// On/off switch. Returns `true` when the user flipped it.
     pub fn toggle(&mut self, key: &str, value: &mut bool) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let h = (self.theme.control * 0.65).round();
         let target = self.alloc(Vec2::new((h * 1.75).round(), h));
         let (r, life) = self.enter(id, target, Smooth);
@@ -259,7 +268,7 @@ impl Ui {
 
     /// Slider over `0..=1`. Returns `true` while the user is changing it.
     pub fn slider(&mut self, key: &str, value: &mut f32, width: f32) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let h = (self.theme.control * 0.6).round();
         let target = self.alloc(Vec2::new(width, h));
         let (r, life) = self.enter(id, target, Smooth);
@@ -329,7 +338,7 @@ impl Ui {
     /// Segmented control; the selection indicator slides and stretches
     /// between options. Returns `true` when the selection changed.
     pub fn segmented(&mut self, key: &str, labels: &[&str], selected: &mut usize) -> bool {
-        let id = self.id(key);
+        let id = self.declare(key);
         let font = self.theme.font * 0.93;
         let (h, inset, seg_pad) = (self.theme.control, 4.0, self.theme.pad * 0.8);
         let total: f32 = labels.iter().map(|l| self.text.width(l, font) + seg_pad * 2.0).sum();
@@ -368,6 +377,7 @@ impl Ui {
             } else {
                 0.0
             };
+            n.reframe(self.frame, self.shift);
             let anim = n.begin(self.frame, local.translate(r.min()), &snappy, &snappy) | n.hover.drive(level, fresh, &snappy);
             let ink = self.pal[MUTED].mix(self.pal[TEXT], n.hover.get());
             self.animating |= anim;
@@ -409,7 +419,7 @@ impl Ui {
     /// while the pointer is over the group, so a target never slides away
     /// from under a click.
     pub fn adaptive_actions(&mut self, key: &str, items: &[(&str, &str)]) -> Option<usize> {
-        let group = self.id(key);
+        let group = self.declare(key);
         let mut order = self.orders.remove(&group).unwrap_or_default();
         if order.len() != items.len() {
             order.clear();
@@ -460,7 +470,7 @@ impl Ui {
     /// while the menu is closed, so nothing moves while it is open.
     pub fn adaptive_menu(&mut self, key: &str, label: &str, items: &[(&str, &str)]) -> Option<usize> {
         const MORE: &str = "Más…";
-        let id = self.id(key);
+        let id = self.declare(key);
         let (shown, anchor) = self.menu_trigger(id, label);
         let mut order = self.orders.remove(&id).unwrap_or_default();
         if order.len() != items.len() {
@@ -515,7 +525,7 @@ impl Ui {
     /// same `items`. Shows nothing until a habit exists. Returns the index
     /// of the shortcut clicked.
     pub fn suggestions(&mut self, key: &str, title: &str, source: &str, items: &[(&str, &str)], max: usize) -> Option<usize> {
-        let id = self.id(key);
+        let id = self.declare(key);
         let src = self.id(source);
         let now = self.now;
         let mut picks = self.orders.remove(&id).unwrap_or_default();

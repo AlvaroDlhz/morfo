@@ -127,4 +127,53 @@ impl Color {
         let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         [q(self.r), q(self.g), q(self.b), q(self.a)]
     }
+
+    /// `0xRRGGBB`, the inverse of [`hex`](Self::hex) (alpha is dropped).
+    pub fn to_hex(self) -> u32 {
+        let [r, g, b, _] = self.to_rgba8();
+        (r as u32) << 16 | (g as u32) << 8 | b as u32
+    }
+
+    /// Hue, saturation and value of this color.
+    pub fn to_hsv(self) -> Hsv {
+        let (r, g, b) = (self.r.clamp(0.0, 1.0), self.g.clamp(0.0, 1.0), self.b.clamp(0.0, 1.0));
+        let max = r.max(g).max(b);
+        let d = max - r.min(g).min(b);
+        let h = if d <= 1e-6 {
+            0.0
+        } else if max == r {
+            ((g - b) / d).rem_euclid(6.0) / 6.0
+        } else if max == g {
+            ((b - r) / d + 2.0) / 6.0
+        } else {
+            ((r - g) / d + 4.0) / 6.0
+        };
+        Hsv { h, s: if max <= 1e-6 { 0.0 } else { d / max }, v: max }
+    }
+
+    /// The opaque color with hue, saturation and value `hsv`.
+    pub fn from_hsv(hsv: Hsv) -> Color {
+        let (h, s, v) = (hsv.h.rem_euclid(1.0) * 6.0, hsv.s.clamp(0.0, 1.0), hsv.v.clamp(0.0, 1.0));
+        let c = v * s;
+        let x = c * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+        let (r, g, b) = match h as u32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        let m = v - c;
+        Color::rgba(r + m, g + m, b + m, 1.0)
+    }
+}
+
+/// A color as hue (`0..1`, one turn of the color wheel), saturation and
+/// value (`0..1`): the way color pickers work.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hsv {
+    pub h: f32,
+    pub s: f32,
+    pub v: f32,
 }

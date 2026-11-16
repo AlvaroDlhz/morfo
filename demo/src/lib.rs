@@ -5,18 +5,41 @@
 
 mod pages;
 
-use morfo::{Color, Icon, Profile, Size, Theme, TitleBar, Ui, Variant, Vec2};
+use morfo::{Color, Date, Icon, Profile, Shortcut, Size, Theme, TitleBar, Transition, Ui, Variant, Vec2};
 
 /// Tamaño lógico recomendado de la ventana.
 pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
 
-pub const PAGES: [&str; 11] =
-    ["Inicio", "Botones", "Controles", "Selección", "Cajas", "Formas", "Flotantes", "Entrada", "Adaptativo", "Mutación", "Datos"];
+pub const PAGES: [&str; 18] = [
+    "Inicio",
+    "Botones",
+    "Controles",
+    "Selección",
+    "Cajas",
+    "Formas",
+    "Flotantes",
+    "Entrada",
+    "Adaptativo",
+    "Mutación",
+    "Datos",
+    "Gráficos",
+    "Navegación",
+    "Formularios",
+    "Estado y paneles",
+    "Scroll",
+    "Transiciones",
+    "Composición",
+];
 
 /// El temario: las páginas agrupadas en módulos, en el orden en que se
 /// aprenden. Cada lección es el índice de su página en [`PAGES`].
-pub const COURSE: [(&str, &[usize]); 4] =
-    [("Fundamentos", &[0, 1, 2]), ("Construir interfaces", &[3, 4, 5, 7]), ("Capas y datos", &[6, 10]), ("Lo propio de morfo", &[8, 9])];
+pub const COURSE: [(&str, &[usize]); 5] = [
+    ("Fundamentos", &[0, 1, 2]),
+    ("Construir interfaces", &[3, 4, 17, 5, 7, 13]),
+    ("Capas y estado", &[6, 14]),
+    ("Navegar y mostrar datos", &[12, 10, 11]),
+    ("Lo propio de morfo", &[8, 9, 15, 16]),
+];
 
 /// Las páginas en el orden del curso.
 pub fn course_order() -> Vec<usize> {
@@ -160,6 +183,44 @@ pub struct State {
     pub density: bool,
     /// The pinned notice of the «Flotantes» page is on.
     pub pinned: bool,
+    pub chart_set: usize,
+    pub gauge_level: f32,
+    pub nav_tab: usize,
+    pub tree_sel: Option<usize>,
+    pub page_no: usize,
+    pub drawer: bool,
+    pub date: Date,
+    pub color: Color,
+    pub labels: Vec<String>,
+    pub langs: Vec<usize>,
+    pub shortcut: Option<Shortcut>,
+    /// The skeleton on «Estado y paneles» shows until this time.
+    pub load_until: f64,
+    pub inbox: u32,
+    pub step: usize,
+    pub split: f32,
+    pub board: Vec<Vec<String>>,
+    /// How the cards of the «Scroll» page enter, and how many times they
+    /// have been asked to enter again.
+    pub reveal_style: usize,
+    pub reveal_round: u32,
+    /// The choreography and the step of the «Transiciones» wizard.
+    pub tr_style: usize,
+    pub tr_step: usize,
+    /// The photo open in the gallery, if any.
+    pub photo: Option<usize>,
+    /// «Composición»: favourite projects, whether the account is verified,
+    /// the open tab, table and section, the size and accent of the preview.
+    pub favs: [bool; 3],
+    pub verified: bool,
+    pub inbox_tab: usize,
+    pub team_sort: Option<(usize, bool)>,
+    pub done: [bool; 4],
+    pub topic: Option<usize>,
+    pub preview_size: usize,
+    pub preview_accent: usize,
+    pub preview_on: bool,
+    pub iban: String,
 }
 
 impl Default for State {
@@ -217,6 +278,41 @@ impl Default for State {
             dismissed: [false; 3],
             density: false,
             pinned: false,
+            chart_set: 0,
+            gauge_level: 0.62,
+            nav_tab: 0,
+            tree_sel: Some(2),
+            page_no: 0,
+            drawer: false,
+            date: Date::new(2026, 11, 16),
+            color: Color::hex(0x22c3a6),
+            labels: ["diseño", "rust"].map(String::from).to_vec(),
+            langs: vec![0, 3],
+            shortcut: Some(Shortcut { ctrl: true, shift: false, key: "K".into() }),
+            load_until: 0.0,
+            inbox: 3,
+            step: 1,
+            split: 0.45,
+            board: vec![
+                ["Escribir la guía", "Revisar colores", "Probar en Windows"].map(String::from).to_vec(),
+                ["Gráficos animados"].map(String::from).to_vec(),
+                ["Publicar la 0.1"].map(String::from).to_vec(),
+            ],
+            reveal_style: 1,
+            reveal_round: 0,
+            tr_style: 3,
+            tr_step: 0,
+            photo: None,
+            favs: [true, false, false],
+            verified: false,
+            inbox_tab: 0,
+            team_sort: None,
+            done: [true, false, false, true],
+            topic: Some(0),
+            preview_size: 1,
+            preview_accent: 1,
+            preview_on: true,
+            iban: String::new(),
         }
     }
 }
@@ -270,6 +366,31 @@ morfo_live::persist!(State {
     dismissed,
     density,
     pinned,
+    chart_set,
+    gauge_level,
+    nav_tab,
+    tree_sel,
+    page_no,
+    labels,
+    langs,
+    inbox,
+    step,
+    split,
+    board,
+    reveal_style,
+    tr_style,
+    tr_step,
+    photo,
+    favs,
+    verified,
+    inbox_tab,
+    team_sort,
+    done,
+    topic,
+    preview_size,
+    preview_accent,
+    preview_on,
+    iban,
 });
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -285,7 +406,35 @@ impl State {
         s.style = s.style.min(STYLES.len() - 1);
         s.shape = s.shape.min(SHAPES.len() - 1);
         s.btn_size = s.btn_size.min(Size::ALL.len() - 1);
+        s.chart_set = s.chart_set.min(1);
+        s.nav_tab = s.nav_tab.min(2);
+        s.step = s.step.min(3);
+        s.reveal_style = s.reveal_style.min(morfo::Reveal::ALL.len() - 1);
+        s.tr_style = s.tr_style.min(Transition::ALL.len() - 1);
+        s.tr_step = s.tr_step.min(pages::PASOS_TR.len() - 1);
+        s.photo = s.photo.filter(|&p| p < pages::FOTOS.len());
+        s.inbox_tab = s.inbox_tab.min(2);
+        s.preview_size = s.preview_size.min(2);
+        s.preview_accent = s.preview_accent.min(ACCENTS.len() - 1);
+        s.topic = s.topic.filter(|&t| t < 3);
+        s.langs.retain(|&l| l < 8);
+        if s.board.len() != 3 {
+            s.board = State::default().board;
+        }
+        if let Some(d) = snap.get::<i64>("date") {
+            s.date = Date::from_days(d);
+        }
+        if let Some(c) = snap.get::<u32>("color") {
+            s.color = Color::hex(c);
+        }
         s
+    }
+
+    /// Everything [`restored`](Self::restored) reads back.
+    pub fn save_live(&self, snap: &mut morfo_live::Snapshot) {
+        self.save(snap);
+        snap.set("date", &self.date.to_days());
+        snap.set("color", &self.color.to_hex());
     }
 }
 
@@ -322,11 +471,36 @@ fn forget(ui: &mut Ui, s: &mut State) {
     s.file = "ninguna";
 }
 
-/// Una página: aparece y desaparece con `reveal` y su contenido hace scroll.
-fn page(ui: &mut Ui, s: &mut State, key: &str, scroll: &str, index: usize, f: fn(&mut Ui, &mut State)) {
+/// Cada página: su clave (para el pie), su área de scroll y quién la dibuja.
+type Page = (&'static str, &'static str, fn(&mut Ui, &mut State));
+const PAGE_FNS: [Page; 18] = [
+    ("page-inicio", "scroll-inicio", pages::inicio),
+    ("page-botones", "scroll-botones", pages::botones),
+    ("page-controles", "scroll-controles", pages::controles),
+    ("page-seleccion", "scroll-seleccion", pages::seleccion),
+    ("page-contenedores", "scroll-contenedores", pages::cajas),
+    ("page-formas", "scroll-formas", pages::formas),
+    ("page-flotantes", "scroll-flotantes", pages::flotantes),
+    ("page-entrada", "scroll-entrada", pages::entrada),
+    ("page-adaptativo", "scroll-adaptativo", pages::adaptativo),
+    ("page-mutacion", "scroll-mutacion", pages::mutacion),
+    ("page-datos", "scroll-datos", pages::datos),
+    ("page-graficos", "scroll-graficos", pages::graficos),
+    ("page-navegacion", "scroll-navegacion", pages::navegacion),
+    ("page-formularios", "scroll-formularios", pages::formularios),
+    ("page-estado", "scroll-estado", pages::estado),
+    ("page-scroll", "scroll-scroll", pages::scroll),
+    ("page-transiciones", "scroll-transiciones", pages::transiciones),
+    ("page-composicion", "scroll-composicion", pages::composicion),
+];
+
+/// La página abierta: su contenido hace scroll y, al cambiar de lección,
+/// la nueva llega desde el lado hacia el que se avanza en el curso.
+fn page(ui: &mut Ui, s: &mut State) {
     let height = (ui.viewport().y - ui.top_inset() - 100.0).max(120.0);
-    let open = s.tab == index;
-    ui.reveal(key, open, |ui| {
+    let index = s.tab.min(PAGE_FNS.len() - 1);
+    let (key, scroll, f) = PAGE_FNS[index];
+    ui.transition("paginas", lesson_of(index), Transition::Shift, |ui| {
         ui.scroll(scroll, height, |ui| {
             f(ui, s);
             lesson_footer(ui, s, key, index);
@@ -416,17 +590,7 @@ pub fn build(ui: &mut Ui, s: &mut State) {
     ui.muted("Documentación interactiva, hecha con la propia librería. Lleva el cursor al borde izquierdo para ver el temario.");
     ui.space(4.0);
 
-    page(ui, s, "page-inicio", "scroll-inicio", 0, pages::inicio);
-    page(ui, s, "page-botones", "scroll-botones", 1, pages::botones);
-    page(ui, s, "page-controles", "scroll-controles", 2, pages::controles);
-    page(ui, s, "page-seleccion", "scroll-seleccion", 3, pages::seleccion);
-    page(ui, s, "page-contenedores", "scroll-contenedores", 4, pages::cajas);
-    page(ui, s, "page-formas", "scroll-formas", 5, pages::formas);
-    page(ui, s, "page-flotantes", "scroll-flotantes", 6, pages::flotantes);
-    page(ui, s, "page-entrada", "scroll-entrada", 7, pages::entrada);
-    page(ui, s, "page-adaptativo", "scroll-adaptativo", 8, pages::adaptativo);
-    page(ui, s, "page-mutacion", "scroll-mutacion", 9, pages::mutacion);
-    page(ui, s, "page-datos", "scroll-datos", 10, pages::datos);
+    page(ui, s);
 
     // La paleta de comandos (desde el buscador o la página «Adaptativo»):
     // con nada escrito, lo que esta persona más usa aparece primero.

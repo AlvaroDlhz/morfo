@@ -34,8 +34,14 @@ impl Ui {
     /// next field, Escape leaves it. Text being composed with an input
     /// method is shown underlined at the caret.
     pub fn text_field(&mut self, key: &str, value: &mut String, placeholder: &str, width: f32) -> TextEdit {
-        let id = self.id(key);
-        let (font, pad) = (self.theme.font, self.theme.pad * 0.7);
+        let id = self.declare(key);
+        self.text_field_id(id, value, placeholder, width, true)
+    }
+
+    /// [`text_field`](Self::text_field) with a given id; without `framed`
+    /// it draws no box of its own (it lives inside another component's).
+    pub(crate) fn text_field_id(&mut self, id: crate::id::Id, value: &mut String, placeholder: &str, width: f32, framed: bool) -> TextEdit {
+        let (font, pad) = (self.theme.font, if framed { self.theme.pad * 0.7 } else { 2.0 });
         let target = self.alloc(Vec2::new(width, self.theme.control));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
@@ -117,7 +123,9 @@ impl Ui {
         self.animating |= anim;
 
         let a = self.alpha * life;
-        self.draw.rect_stroked(r, self.theme.radius * 0.7, self.pal[RAISED].fade(a), stroke.fade(a), 1.0 + 0.6 * focus_t);
+        if framed {
+            self.draw.rect_stroked(r, self.theme.radius * 0.7, self.pal[RAISED].fade(a), stroke.fade(a), 1.0 + 0.6 * focus_t);
+        }
         let y = r.y + (r.h - font * LINE_HEIGHT) * 0.5;
         let x0 = r.x + pad;
         self.draw.push(DrawCmd::PushClip { rect: Rect::new(x0 - 1.0, r.y, inner + 2.0, r.h), radius: 0.0 });
@@ -162,9 +170,11 @@ impl Ui {
     }
 
     /// A viewport of fixed `height` over content of any length. The wheel
-    /// scrolls it with inertia; content outside it is not drawn.
+    /// scrolls it with inertia, and pushing past either end stretches the
+    /// content a little before it springs back; content outside it is not
+    /// drawn.
     pub fn scroll(&mut self, key: &str, height: f32, f: impl FnOnce(&mut Ui)) {
-        let id = self.id(key);
+        let id = self.declare(key);
         let target = self.alloc(Vec2::new(self.available_width(), height));
         let (r, life) = self.enter(id, target, Smooth);
         let content = self.sizes.get(&id).map_or(0.0, |s| s.y);
@@ -185,17 +195,36 @@ impl Ui {
             }
         }
         n.aux.set(n.aux.target().clamp(0.0, max));
-        let anim = n.aux.tick(&k) | n.hover.drive(over as u8 as f32, false, &k);
-        let (offset, hover) = (n.aux.get(), n.hover.get());
+        // `e1` is the stretch past an end: it only ever springs back to 0.
+        let smooth = self.steps[Smooth as usize];
+        n.e1.set(0.0);
+        let anim = n.aux.tick(&k) | n.hover.drive(over as u8 as f32, false, &k) | n.e1.tick(&smooth);
+        let (offset, hover, stretch) = (n.aux.get(), n.hover.get(), n.e1.get());
         self.animating |= anim;
+        let top = target.y - offset - stretch;
+        // What scrolled since last frame moves the content rigidly (`stamp`
+        // keeps last frame's amount); where the area itself goes, its
+        // content follows on springs as anything else.
+        let scrolled = (offset + stretch) as f64;
+        let moved = if n.fresh() { 0.0 } else { (n.stamp - scrolled) as f32 };
+        n.stamp = scrolled;
 
         let (clip, cull) = (self.clip, self.draw.cull);
         let view = clip.map_or(r, |c| c.intersect(&r));
         self.clip = Some(view);
         self.draw.cull = Some(view);
-        self.draw.push(DrawCmd::PushClip { rect: r, radius: 0.0 });
+        // Scrolling cuts the content above and below; to the sides it only
+        // leaves room for the shadows of what is inside.
+        self.draw.push(DrawCmd::PushClip { rect: Rect::new(r.x - 28.0, r.y, r.w + 56.0, r.h), radius: 0.0 });
         let gap = self.theme.gap;
-        self.group(id, Dir::Column, Vec2::ZERO, gap, Some(Vec2::new(target.x, target.y - offset)), f);
+        self.scrolls.push(crate::scrolling::ScrollCtx { id, view, offset, max, top });
+        let pin = std::mem::take(&mut self.pin_inset);
+        let outer = self.shift;
+        self.shift = outer + moved;
+        self.group(id, Dir::Column, Vec2::ZERO, gap, Some(Vec2::new(target.x, top)), |ui| ui.within(id, f));
+        self.shift = outer;
+        self.pin_inset = pin;
+        self.scrolls.pop();
         self.draw.push(DrawCmd::PopClip);
         self.clip = clip;
         self.draw.cull = cull;
@@ -207,7 +236,14 @@ impl Ui {
             let wheel = std::mem::take(&mut self.input.wheel);
             self.scroll_restore.remove(&id);
             let n = self.nodes.get_mut(&id).unwrap();
-            n.aux.set((n.aux.target() - wheel).clamp(0.0, max));
+            let want = n.aux.target() - wheel;
+            n.aux.set(want.clamp(0.0, max));
+            // Past an end, the push becomes a kick that stretches the
+            // content and springs back.
+            let excess = want - want.clamp(0.0, max);
+            if excess != 0.0 && !self.instant {
+                n.e1.impulse((excess * 9.0).clamp(-1100.0, 1100.0));
+            }
             self.animating = true;
         }
 

@@ -315,6 +315,9 @@ fn access_tree(nodes: &[AccessNode], focus: Option<Id>, scale: f64) -> TreeUpdat
         if let Some(c) = n.checked {
             node.set_toggled(if c { Toggled::True } else { Toggled::False });
         }
+        if n.disabled {
+            node.set_disabled();
+        }
         let r = n.rect;
         node.set_bounds(accesskit::Rect {
             x0: r.x as f64 * scale,
@@ -459,7 +462,7 @@ impl App {
         let Some(live) = self.live.as_ref() else { return };
         self.save_profile();
         let mut snap = Snapshot::new();
-        self.state.save(&mut snap);
+        self.state.save_live(&mut snap);
         snap.set("ui", &self.ui.save_state());
         if let Some(gfx) = self.gfx.as_ref() {
             let window = &gfx.window;
@@ -645,7 +648,14 @@ impl ApplicationHandler<Wake> for App {
                     WinitKey::Named(NamedKey::Space) => Some(Key::Space),
                     _ => None,
                 };
-                if self.mods.ctrl {
+                if self.mods.ctrl && self.ui.wants_keys() {
+                    // A shortcut field is recording: the combination is for it.
+                    match (&event.logical_key, key) {
+                        (WinitKey::Character(c), _) => self.ui.chord(c),
+                        (_, Some(key)) => self.ui.key_pressed(key),
+                        _ => {}
+                    }
+                } else if self.mods.ctrl {
                     // Text typed with Ctrl held is a shortcut, not text.
                     self.shortcut(&event.logical_key);
                 } else {
@@ -670,7 +680,11 @@ fn main() {
     let gpu = !std::env::args().any(|a| a == "--cpu");
     // After a live reload: what the build this one replaced was showing.
     let restored = morfo_live::restored();
-    let state = restored.as_ref().map_or_else(State::default, State::restored);
+    let mut state = restored.as_ref().map_or_else(State::default, State::restored);
+    if restored.is_none() {
+        // Today, in local time, for the date picker.
+        state.date = morfo::Date::from_unix(now() + local_utc_offset());
+    }
     let mut ui = Ui::new(if restored.is_some() { theme_of(&state) } else { Theme::dark() });
     if let Some(saved) = restored.as_ref().and_then(|snap| snap.get::<String>("ui")) {
         ui.restore_state(&saved);

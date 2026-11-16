@@ -202,6 +202,25 @@ impl<T: Animatable> Motion<T> {
     }
 }
 
+impl Motion<Rect> {
+    /// Moves value and target together by `d`: the frame of reference
+    /// moved (the content of a scroll area), so nothing animates.
+    pub fn translate(&mut self, d: Vec2) {
+        self.value = self.value.translate(d);
+        self.target = self.target.translate(d);
+    }
+}
+
+impl Motion<f32> {
+    /// Adds `velocity` (units per second) to the value's motion: a kick
+    /// that carries it past its target before the spring brings it back
+    /// (the bounce of a scroll area pushed beyond its end).
+    pub fn impulse(&mut self, velocity: f32) {
+        self.velocity += velocity;
+        self.resting = false;
+    }
+}
+
 /// Smooth 0..1 ramp for cross-fades driven by a spring progress.
 pub fn smoothstep(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
