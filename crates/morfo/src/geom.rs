@@ -13,6 +13,10 @@ impl Vec2 {
     pub const fn new(x: f32, y: f32) -> Self {
         Vec2 { x, y }
     }
+    /// Distance from the origin.
+    pub fn length(self) -> f32 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
     pub const fn splat(v: f32) -> Self {
         Vec2 { x: v, y: v }
     }

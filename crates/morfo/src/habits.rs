@@ -69,6 +69,9 @@ impl Ui {
     /// `source` (as in [`adaptive_actions`](Self::adaptive_actions)).
     /// Returns the index of the item when clicked.
     pub fn predicted_action(&mut self, key: &str, title: &str, source: &str, items: &[(&str, &str)]) -> Option<usize> {
+        if self.adaptation == crate::adapt::Adaptation::Off {
+            return None;
+        }
         let id = self.declare(key);
         let src = self.id(source);
         let guess = self.profile.predict(self.now).and_then(|(next, _)| items.iter().position(|(k, _)| src.child(k) == next));
@@ -106,8 +109,8 @@ impl Ui {
             order.extend((0..tiles.len() as u32).map(|i| (i, Prominence::Regular)));
         }
         let now = self.now;
-        let busy = self.rect_of(group).zip(self.input.pointer).is_some_and(|(r, p)| r.contains(p));
-        if !busy {
+        let busy = self.layout_rect(group).zip(self.input.pointer).is_some_and(|(r, p)| r.contains(p));
+        if !busy && self.may_rearrange() {
             self.profile.arrange(&mut order, now, 0.2, |(i, _)| group.child(tiles[i as usize].0));
             for (i, level) in order.iter_mut() {
                 *level = self.profile.prominence(group.child(tiles[*i as usize].0), now);

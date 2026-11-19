@@ -1,333 +1,411 @@
 # morfo
 
-Componentes de interfaz en Rust donde **todo se transforma con fluidez** y la
-interfaz **se adapta a cada persona según cómo la usa**. Dos usuarios del mismo
-programa pueden acabar viendo interfaces distintas.
+**English** · [Español](README.es.md)
 
-| Documentación interactiva | Temario del curso desplegado |
+Interface components in Rust where **everything changes fluidly** and the
+interface **adapts to each person by how they use it**. Two people using the
+same program can end up with different interfaces.
+
+| Interactive documentation | Course index, unfolded |
 | --- | --- |
-| ![inicio](docs/inicio.png) | ![indice](docs/indice.png) |
-| **Interfaz ya adaptada al uso** | **Tipos de botón y sus variantes** |
-| ![adaptado](docs/adaptado.png) | ![botones](docs/botones.png) |
-| **Controles, con otro color de acento** | **Paleta de comandos (Ctrl+K)** |
-| ![controles](docs/controles.png) | ![paleta](docs/paleta.png) |
-| **Buscador desplegado desde la lupa** | |
-| ![buscador](docs/buscador.png) | |
-| **Tabla ordenada por precio** | **Rejilla, columnas y alineación** |
-| ![tabla](docs/tabla.png) | ![rejilla](docs/rejilla.png) |
-| **Lo siguiente que sueles hacer** | **Tus hábitos, con su porqué** |
-| ![siguiente](docs/siguiente.png) | ![habitos](docs/habitos.png) |
-| **Dibujo libre: arcos y polígonos** | **La misma interfaz pintada por la GPU** |
-| ![dibujo](docs/dibujo.png) | ![gpu](docs/gpu.png) |
-| **Diálogo que crece desde su botón** | **Controles de selección** |
-| ![dialogo](docs/dialogo.png) | ![seleccion](docs/seleccion.png) |
-| **Un botón mutando en tarjeta** | **Mutado según el uso** |
-| ![mutacion](docs/mutacion.png) | ![mutacion-uso](docs/mutacion-uso.png) |
-| **Gráficos que viajan a sus datos** | **Calendario de un selector de fecha** |
-| ![graficos](docs/graficos.png) | ![calendario](docs/calendario.png) |
-| **Panel lateral sobre el contenido** | **Tablero: una tarjeta en la mano** |
-| ![panel-lateral](docs/panel-lateral.png) | ![tablero](docs/tablero.png) |
-| **Paralaje: cada capa a su velocidad** | **Una foto volando hasta su detalle** |
-| ![paralaje](docs/paralaje.png) | ![transicion](docs/transicion.png) |
-| **Contenido propio en pestañas, menús y tablas** | |
-| ![composicion](docs/composicion.png) | |
+| ![home](docs/inicio.png) | ![index](docs/indice.png) |
+| **An interface already adapted to its use** | **Kinds of button and their variants** |
+| ![adapted](docs/adaptado.png) | ![buttons](docs/botones.png) |
+| **Controls, with another accent color** | **Command palette (Ctrl+K)** |
+| ![controls](docs/controles.png) | ![palette](docs/paleta.png) |
+| **Search unfolded from the magnifier** | |
+| ![search](docs/buscador.png) | |
+| **A table sorted by price** | **Grid, columns and alignment** |
+| ![table](docs/tabla.png) | ![grid](docs/rejilla.png) |
+| **What you usually do next** | **Your habits, with their reasons** |
+| ![next](docs/siguiente.png) | ![habits](docs/habitos.png) |
+| **Free drawing: arcs and polygons** | **The same interface painted by the GPU** |
+| ![drawing](docs/dibujo.png) | ![gpu](docs/gpu.png) |
+| **A dialog growing out of its button** | **Selection controls** |
+| ![dialog](docs/dialogo.png) | ![selection](docs/seleccion.png) |
+| **A button morphing into a card** | **Morphed by use** |
+| ![morph](docs/mutacion.png) | ![morph by use](docs/mutacion-uso.png) |
+| **Charts travelling to their data** | **The calendar of a date picker** |
+| ![charts](docs/graficos.png) | ![calendar](docs/calendario.png) |
+| **A side panel over the content** | **Board: a card in hand** |
+| ![side panel](docs/panel-lateral.png) | ![board](docs/tablero.png) |
+| **Parallax: each layer at its speed** | **A photo flying to its detail** |
+| ![parallax](docs/paralaje.png) | ![transition](docs/transicion.png) |
+| **Your own content in tabs, menus and tables** | |
+| ![composition](docs/composicion.png) | |
 
-## Ideas clave
+(The documentation app is in Spanish; the components speak English by
+default and any other language through a `Locale`.)
 
-- **Identidad = morph.** Cada elemento tiene un `Id` estable. El layout solo
-  calcula *destinos*; unos muelles llevan hasta ellos la posición, el tamaño,
-  el radio, los colores y la tipografía. Reordenar, redimensionar, cambiar de
-  variante o de tema es siempre una transición continua, sin escribir código
-  de animación.
-- **Mutación.** Un componente puede convertirse en otro distinto (un botón en
-  un campo de texto, una casilla en una tarjeta): `ui.morph(clave, forma, …)`
-  hace viajar la forma de fondo de uno a otro (posición, tamaño, radio y
-  color) mientras el contenido se funde, y los vecinos se apartan al mismo
-  ritmo. La «forma» puede ser cualquier valor con `Hash`, incluido el peso que
-  el uso le ha dado a un elemento.
-- **Componentes dentro de componentes.** Un contenedor con clave (`card`,
-  `dialog`, `scroll`, `accordion`, `transition`…) es dueño de lo que contiene:
-  sus claves quedan bajo la suya, así que un componente hecho de otros se
-  repite sin que sus piezas choquen, y `ui.find(clave)` encuentra algo
-  anidado sin escribir la ruta. Cualquier contenido puede ser un botón
-  (`pressable`), apagarse entero (`enabled`) o heredar tamaño, acento y
-  variante (`with_size`, `with_accent`, `with_variant`).
-- **Scroll y transiciones.** Lo que hay dentro de un área de scroll se mueve
-  con ella como una sola pieza, y puede reaccionar a ella: entrar al verse
-  (`scroll_reveal`, escalonado si llegan varios), contar (`count_up`), moverse
-  a otra velocidad (`parallax`) o quedarse fijo arriba (`sticky_section`).
-  `ui.transition(clave, vista, estilo, …)` cambia de vista con una de siete
-  coreografías, en la dirección del avance, y lo que dos vistas comparten
-  (`hero`) vuela de un sitio a otro.
-- **Muelles analíticos.** La solución cerrada del muelle amortiguado es lineal
-  en posición y velocidad, así que sus 4 coeficientes se calculan una vez por
-  frame y cada valor animado avanza con 4 multiplicaciones. Exacto a cualquier
-  frecuencia de refresco, interrumpible en cualquier momento conservando la
-  velocidad.
-- **Motor adaptativo.** `Profile` guarda por elemento una puntuación de uso
-  que decae con el tiempo. De ahí salen el orden (`arrange`) y el peso visual
-  (`prominence`), ambos con histéresis para que nada baile. Nada se mueve
-  mientras el puntero está encima. Aprende también *cuándo* se usa cada cosa
-  (hora del día) y *qué viene después de qué* (`predict`), y puede explicar
-  por qué coloca algo donde lo coloca (`explain`). El perfil se serializa a
-  texto para guardarlo por usuario.
-- **La persona manda.** Puede ver lo que la interfaz ha aprendido
-  (`ui.habits()`, con nombre y motivo), olvidar un hábito (`forget`), pausar
-  el aprendizaje (`frozen`), copiar su perfil o borrarlo entero.
-- **Coste cero en reposo.** `ui.end()` indica si algo sigue moviéndose; si no,
-  el programa no dibuja ni calcula nada hasta el siguiente evento.
-- **Solo el trabajo que se ve.** Un frame estable del núcleo no asigna
-  memoria. Las medidas de
-  texto y el partido en líneas de cada párrafo se recuerdan mientras no
-  cambien; las tarjetas lejos de la vista de su área de scroll no se
-  construyen; y el renderizador por CPU repinta solo el rectángulo que
-  cambió.
-- **Independiente del renderizador.** El núcleo no tiene ninguna dependencia
-  y produce una lista plana de primitivas. Hay tres backends: CPU
-  (`morfo-skia`), GPU (`morfo-wgpu`) y web (`morfo-web`, WebAssembly sobre
-  canvas). Un test comprueba que CPU y GPU pintan la misma imagen.
-- **Accesible.** Todo se maneja con teclado (Tab, Enter, Espacio, flechas)
-  con un anillo de foco que salta de un elemento a otro, y la interfaz se
-  describe a los lectores de pantalla (AccessKit en la demo).
+## Key ideas
 
-## Uso
+- **Identity = morph.** Every element has a stable `Id`. The layout only
+  computes *targets*; springs carry position, size, radius, colors and type
+  there. Reordering, resizing, switching variant or theme is always a
+  continuous transition, with no animation code to write.
+- **Morphing.** One component can become a different one (a button a text
+  field, a checkbox a card): `ui.morph(key, form, …)` moves the background
+  shape from one to the other (position, size, radius and color) while the
+  content cross-fades and the neighbours make room at the same pace. The
+  "form" can be any `Hash` value, including the weight use has given an
+  element.
+- **Components inside components.** A keyed container (`card`, `dialog`,
+  `scroll`, `accordion`, `transition`…) owns what it holds: their keys live
+  under its own, so a component made of others can be repeated without its
+  parts colliding, and `ui.find(key)` finds something nested without writing
+  its path. Any content can be a button (`pressable`), be switched off as a
+  whole (`enabled`) or inherit size, accent and variant (`with_size`,
+  `with_accent`, `with_variant`).
+- **Scrolling and transitions.** What is inside a scroll area moves with it
+  as one piece, and can react to it: come in when seen (`scroll_reveal`,
+  staggered when several arrive), count up (`count_up`), move at another
+  speed (`parallax`) or stick to the top (`sticky_section`).
+  `ui.transition(key, view, style, …)` changes view with one of seven
+  choreographies, in the direction of travel, and what two views share
+  (`hero`) flies from one place to the other.
+- **Analytic springs.** The closed-form solution of the damped spring is
+  linear in position and velocity, so its 4 coefficients are computed once a
+  frame and each animated value advances with 4 multiplications. Exact at any
+  refresh rate, interruptible at any moment keeping its velocity.
+- **Adaptive engine.** `Profile` keeps, per element, a usage score that
+  decays over time. From it come order (`arrange`) and visual weight
+  (`prominence`), both with hysteresis so nothing jitters. Nothing moves
+  while the pointer is over it. It also learns *when* each thing is used
+  (time of day) and *what comes after what* (`predict`), and can explain why
+  it put something where it is (`explain`). The profile serializes to text,
+  to keep one per user.
+- **The person is in charge.** They can see what the interface has learned
+  (`ui.habits()`, with names and reasons), forget a habit (`forget`), pause
+  learning (`frozen`), copy their profile or erase it. And how much it adapts
+  is a choice (`set_adaptation`: off, suggestions only, on request, or
+  continuous), because an interface that rearranges itself does not suit
+  everyone.
+- **Zero cost at rest.** `ui.end()` says whether anything is still moving;
+  if not, the program draws and computes nothing until the next event.
+- **Only the work that shows.** A steady frame of the core allocates no
+  memory (checked in CI). Text measurements and the line breaking of each
+  paragraph are remembered while they do not change; cards far from the view
+  of their scroll area are not built; the CPU renderer repaints only the
+  rectangle that changed; and on battery, animations run at 30 frames per
+  second.
+- **Renderer independent.** The core has no dependencies and produces a flat
+  list of primitives. There are three backends: CPU (`morfo-skia`), GPU
+  (`morfo-wgpu`) and web (`morfo-web`, WebAssembly on a canvas). A test
+  checks that CPU and GPU paint the same picture.
+- **Accessible.** Everything works with the keyboard (Tab, Enter, Space,
+  arrows) with a focus ring that springs from element to element, and with a
+  gamepad or a remote (`move_focus`). The interface describes itself to
+  screen readers as a tree (groups, dialogs, lists): AccessKit on the
+  desktop, an ARIA mirror on the web. It follows the system's "reduce
+  motion" (`set_motion`), checks the theme's contrast (`contrast_issues`),
+  ships high-contrast themes, enlarges text (`set_text_scale`) and announces
+  form errors.
+- **Any language.** The words and formats the components show by
+  themselves (months, "More…", numbers, dates, key names) come from a
+  `Locale` (English and Spanish included). With `rtl` the whole interface is
+  drawn as in a mirror and Hebrew or Arabic lines read from the right.
+
+## Use
+
+The shortest way to a window is `morfo-winit`: it opens the window, paints
+with the GPU (or the CPU when there is none), passes on keyboard, mouse,
+touch, input methods and clipboard, publishes accessibility and follows the
+system's settings (reduced motion, battery):
+
+```rust,no_run
+use morfo_winit::{run, Options};
+
+run(Options::new("Hello"), |ui, _cx| {
+    ui.heading("Hello");
+    if ui.button("greet", "Greet").clicked {
+        println!("Hello!");
+    }
+})
+.unwrap();
+```
+
+With an event loop of your own, use the core directly:
 
 ```rust
 use morfo::{Theme, Ui, Vec2};
 
 let mut ui = Ui::new(Theme::dark());
-let mut oscuro = true;
+let mut dark = true;
 
-// cada frame:
-ui.begin(tiempo_en_segundos, Vec2::new(ancho, alto));
-ui.heading("Hola");
-if ui.button("guardar", "Guardar").clicked { /* ... */ }
-ui.toggle("oscuro", &mut oscuro);
-// Barra que se reordena y redimensiona según el uso de esta persona:
-if let Some(i) = ui.adaptive_actions("acciones", &[("nuevo", "Nuevo"), ("abrir", "Abrir")]) { /* ... */ }
+// every frame:
+ui.begin(time_in_seconds, Vec2::new(width, height));
+ui.heading("Hello");
+if ui.button("save", "Save").clicked { /* ... */ }
+ui.toggle("dark", &mut dark);
+// A bar that reorders and resizes itself by how this person uses it:
+if let Some(i) = ui.adaptive_actions("actions", &[("new", "New"), ("open", "Open")]) { /* ... */ }
 let frame = ui.end();
 
-renderer.render(ui.draw_list(), &mut pixmap, escala, ui.background());
-if frame.animating { /* pedir otro frame */ }
+renderer.render(ui.draw_list(), &mut pixmap, scale, ui.background());
+if frame.animating { /* ask for another frame */ }
 ```
 
-La entrada se pasa con `pointer_moved`, `pointer_pressed`, `pointer_released`,
+Input goes in with `pointer_moved`, `pointer_pressed`, `pointer_released`,
 `pointer_left`, `scroll_wheel`, `key_pressed`, `text_input`, `paste`,
-`ime_preedit` y `set_modifiers`; el texto copiado sale por `take_clipboard`. Si
-`frame.animating` es falso, `frame.wake_in` dice en cuántos segundos hará
-falta un frame sin que haya entrada (un aviso que caduca, el cursor de texto).
-Para guardar y restaurar la forma de cada usuario: `ui.profile().encode()` y
-`ui.set_profile(Profile::decode(texto)?)`. Para retomar la interfaz donde se
-dejó tras relanzar el programa: `ui.save_state()` y `ui.restore_state(texto)`
-(la posición de cada scroll), y `ui.set_instant(true)` durante unos frames sin
-pintar para que el primero que se vea esté ya quieto y en su sitio.
+`ime_preedit`, `set_modifiers`, `touch_started`, `touch_moved`,
+`touch_ended`, `pinch_moved` and `move_focus`; copied text comes out of
+`take_clipboard`. When `frame.animating` is false, `frame.wake_in` says in
+how many seconds a frame will be needed without any input (a notice that
+expires, the text caret). To keep and restore each user's shape:
+`ui.profile().encode()` and `ui.set_profile(Profile::decode(text)?)`. To
+pick the interface up where it was after relaunching the program:
+`ui.save_state()` and `ui.restore_state(text)` (each scroll position), and
+`ui.set_instant(true)` for a few frames without painting so the first one
+seen is already still and in place.
 
-### Componentes
+### Components
 
-| Grupo | Componentes |
+| Group | Components |
 | --- | --- |
-| Texto | `label`, `muted`, `title`, `heading`, `text` (tamaño libre), `code`, `paragraph` y `paragraph_muted` (se ajustan al ancho) |
-| Botones | `button`, `button_with`, `icon_button` (solo icono), `button_icon` (icono y texto), `toggle_button` (se queda pulsado), `loading_button` (se encoge en un indicador mientras carga), `hold_button` (mantener para confirmar). Todos con las variantes `Solid`, `Soft`, `Outline`, `Ghost` y los tamaños `Sm`, `Md`, `Lg` |
-| Iconos | `Icon`: 18 iconos vectoriales (flechas, cerrar, buscar, inicio, descargar, reproducir, maximizar…) |
-| Controles | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (rango con dos manijas), `knob` (perilla), `xy_pad` (pad de dos ejes), `rating` (estrellas), `swatches` (muestras de color) |
-| Selección | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
-| Cajas | `row`, `row_top`, `fill` (empuja el resto de la fila al final), `column`, `grid`, `columns` (anchos con peso), `align`, `card`, `separator`, `reveal`, `scroll` (rebota al pasar de un extremo), `scope`, `surface`, `canvas` (dibujo libre), `presence`, `transient` (cualquier contenido anima su salida), `splitter` (dos paneles con un divisor que se arrastra), `virtual_list` (lista de filas iguales que solo construye las que se ven: cuesta lo mismo con cien filas que con cien mil) |
-| Flotantes | `dialog`, `menu`, `tooltip`, `toast`, `notice` (aviso fijo en una esquina mientras se declare: trabajo en curso, sin conexión, un error), `close` |
-| Navegación | `course_nav` (temario de curso en el borde izquierdo: módulos, lecciones numeradas en una línea de tiempo y progreso que se recuerda), `side_nav` (índice simple), `search` (lupa que se despliega en un buscador con resultados), `tabs` (subrayado que salta entre pestañas), `breadcrumbs` (el centro se pliega en «…» si no cabe), `tree` (ramas que se despliegan; recuerda cuáles están abiertas), `pagination`, `drawer` (panel que entra por un lado de la ventana) |
-| Ventana | `title_bar` (barra propia de la aplicación en lugar de la del gestor de ventanas: título, contenido propio, minimizar, maximizar/restaurar, cerrar, arrastrar, doble clic y bordes para redimensionar) |
-| Entrada | `text_field` y `text_area` (selección con ratón y Mayús, Ctrl+A/C/X/V, métodos de entrada; el área es multilínea con ajuste y scroll), `select` (desplegable), `combobox` (sugerencias sin distinguir tildes), `date_picker` (calendario del mes, con el tipo `Date`), `color_picker` (cuadrado de saturación y brillo, barra de tono), `tag_input` (lo escrito se convierte en etiquetas), `multi_select` (varias opciones con buscador), `shortcut_input` (graba una combinación de teclas como `Shortcut`; el programa le pasa Ctrl+tecla con `chord` mientras `wants_keys`) |
-| Datos | `table` (ordenable por columnas; las filas viajan al ordenar), `reorderable` (lista que se reordena arrastrando), `kanban` (tablero de columnas; las tarjetas se arrastran entre ellas) |
-| Gráficos | `bar_chart`, `line_chart` (varias series), `sparkline` (tendencia en una línea), `heatmap`, `gauge`: valores y escala son muelles, y al pasar el ratón se ve cada valor |
-| Estado | `skeleton` (líneas grises con brillo que se transforman en el contenido al cargar), `badge` y `badge_on` (contador que salta al cambiar y se va en cero), `steps` (procesos por pasos) |
-| Adaptativos | `adaptive_actions`, `adaptive_menu`, `suggestions`, `predicted_action` (ofrece el siguiente paso habitual), `adaptive_dashboard` (inicio que se reordena y agranda lo más usado), `command_palette`, `set_adaptive_density` (más compacta cuanto más se usa), `habits`, `why` |
-| Accesibilidad | `set_accessibility`, `access_nodes`, `access_click`, `access_focus` |
-| Dibujo | `DrawList::polygon`, `DrawList::arc`, rectángulos, líneas y texto (dentro de `canvas`) |
-| Mutación | `morph` (cualquier componente o grupo se transforma en otro), `request_focus` |
-| Scroll | `scroll_reveal` (entra al verse con `Reveal::Fade`, `Rise`, `Left`, `Right`, `Grow` o `Wipe`; los que llegan juntos, uno tras otro), `count_up` (número que cuenta desde cero al verse), `parallax` (capas a distintas velocidades), `sticky_section` (cabecera fija hasta que la siguiente la empuja; se anidan), `anchor` y `scroll_to` (viaje con muelle hasta una sección), `scroll_progress` y `scroll_linked` (valores ligados a la posición) |
-| Composición | `pressable` (cualquier contenido como un botón; los controles de dentro siguen siendo suyos), `enabled` (apaga todo lo que contiene: atenuado, sin puntero ni teclado, anunciado como desactivado), `tabs_with`, `menu_with`, `table_with` y `accordion_with` (cada pestaña, opción, celda o cabecera muestra lo que construyas), `with_size`, `with_accent` y `with_variant` (estilo que hereda lo de dentro), `find` y `find_all` (el elemento declarado con una clave, esté donde esté) |
-| Transiciones | `transition` (cambio de vista con `Transition::Fade`, `Slide`, `Shift`, `Push`, `Zoom`, `Flip` o `Rise`, en la dirección del avance), `hero` (elemento compartido que vuela de una vista a otra) |
+| Text | `label`, `muted`, `title`, `heading`, `text` (any size), `code`, `paragraph` and `paragraph_muted` (wrap to the width), `rich` (a paragraph of runs in bold, italic, monospace, accent or muted) |
+| Buttons | `button`, `button_with`, `icon_button` (icon only), `button_icon` (icon and text), `toggle_button` (stays pressed), `loading_button` (shrinks into a spinner while busy), `hold_button` (hold to confirm). All in the variants `Solid`, `Soft`, `Outline`, `Ghost` and the sizes `Sm`, `Md`, `Lg` |
+| Icons | `Icon`: 18 vector icons (arrows, close, search, home, download, play, maximize…) and your own from 24×24 SVG path data (`Icon::Stroke`, `Icon::Fill`), as Lucide, Material or Tabler publish them |
+| Controls | `toggle`, `slider`, `progress`, `segmented`, `range_slider` (two handles), `knob`, `xy_pad` (two axes), `rating` (stars), `swatches` (color samples) |
+| Selection | `checkbox`, `radio`, `chip`, `stepper`, `accordion` |
+| Boxes | `row`, `row_top`, `fill` (pushes the rest of the row to its end), `column`, `grid`, `columns` (weighted widths), `align`, `card`, `separator`, `reveal`, `scroll` (bounces past its ends), `scope`, `surface`, `canvas` (free drawing), `presence`, `transient` (any content animates its exit), `splitter` (two panes and a draggable divider), `virtual_list` (rows of one height, only the visible ones built: a hundred rows cost the same as a hundred thousand) |
+| Floating | `dialog`, `menu`, `tooltip`, `toast`, `notice` (a corner notice while declared: work in progress, offline, an error), `close` |
+| Navigation | `course_nav` (a course index on the left edge: modules, numbered lessons on a timeline, remembered progress), `side_nav` (a simple index), `search` (a magnifier that unfolds into a search box with results), `tabs` (an underline that jumps between tabs), `breadcrumbs` (the middle folds into "…" when short of room), `tree` (branches that unfold; it remembers which), `pagination`, `drawer` (a panel from one side of the window) |
+| Window | `title_bar` (the application's own title bar instead of the window manager's: title, your content, minimize, maximize/restore, close, dragging, double click and edges to resize) |
+| Input | `text_field` and `text_area` (selection with mouse and Shift, double click for a word, Ctrl+A/C/X/V, undo and redo, Ctrl+arrows and Ctrl+Backspace by words, input methods; the area wraps and scrolls), `password_field` (dots for letters; never copied), `number_field` (a number with the locale's decimals and separators, within a range), `field` (label, content and an error announced to screen readers), `select`, `combobox` (suggestions that ignore accents), `date_picker` (a month calendar, with the `Date` type), `color_picker` (saturation/value square, hue bar), `tag_input` (what is typed becomes tags), `multi_select` (several options with a search), `shortcut_input` (records a key combination as a `Shortcut`; the program passes Ctrl+key with `chord` while `wants_keys`) |
+| Data | `table` (sortable by column; rows travel when sorted), `reorderable` (a list reordered by dragging), `kanban` (a board of columns; cards are dragged between them), `draggable` and `drop_target` (any content dragged onto any target, carrying a payload of yours) |
+| Images | `add_image` (RGBA pixels), `image` (with `Fit::Cover`, `Contain` or `Fill`, rounded corners and alternative text), `replace_image`, `remove_image` |
+| Charts | `bar_chart`, `line_chart` (several series), `sparkline` (a trend in one line), `heatmap`, `gauge`: values and scales are springs, and hovering shows each value |
+| Status | `skeleton` (grey shimmering lines that turn into the content once loaded), `badge` and `badge_on` (a count that jumps when it changes and leaves at zero), `steps` (multi-step processes) |
+| Adaptive | `adaptive_actions`, `adaptive_menu`, `suggestions`, `predicted_action` (offers the usual next step), `adaptive_dashboard` (a home that reorders and enlarges what is used most), `command_palette`, `set_adaptive_density` (more compact the more it is used), `set_adaptation`, `habits`, `why` |
+| Accessibility | `set_accessibility`, `access_nodes`, `access_click`, `access_focus`, `move_focus`, `set_motion`, `set_text_scale`, `Theme::contrast_issues`, `Theme::high_contrast` |
+| Language | `set_locale` with `Locale::ENGLISH`, `Locale::SPANISH` or one of your own; `with_rtl(true)` for right-to-left scripts; `bidi::visual` |
+| Drawing | `DrawList::polygon`, `arc`, `gradient` (linear), `dashed_line`, rectangles, lines and text (inside `canvas`); `Path` (lines, Bézier curves and arcs, in code or from SVG data, filled or stroked at any size) |
+| Morphing | `morph` (any component or group turns into another), `request_focus` |
+| Scrolling | `scroll_reveal` (comes in when seen with `Reveal::Fade`, `Rise`, `Left`, `Right`, `Grow` or `Wipe`; those arriving together, one after another), `count_up` (a number counting from zero when seen), `parallax` (layers at different speeds), `sticky_section` (a header that stays until the next one pushes it; they nest), `anchor` and `scroll_to` (a spring ride to a section), `scroll_progress` and `scroll_linked` (values tied to the position) |
+| Composition | `pressable` (any content as a button; the controls inside stay theirs), `enabled` (switches off everything inside: dimmed, no pointer or keyboard, announced as disabled), `tabs_with`, `menu_with`, `table_with` and `accordion_with` (each tab, option, cell or header shows what you build), `with_size`, `with_accent` and `with_variant` (a style what is inside inherits), `find` and `find_all` (the element declared with a key, wherever it is) |
+| Transitions | `transition` (a change of view with `Transition::Fade`, `Slide`, `Shift`, `Push`, `Zoom`, `Flip` or `Rise`, in the direction of travel), `hero` (a shared element flying from one view to the other) |
+| Tools | `testing::Harness` (tests an interface without a window: clicks and types by key, reads back what is drawn and announced), `set_inspector` (outlines the element under the pointer with its key and size), `Theme::to_tokens` and `from_tokens` (the theme as CSS custom properties for design tools) |
 
-Los flotantes se dibujan en capas superiores, bloquean lo que tapan y animan
-también su salida. Para adaptar componentes propios: `ui.affinity(key)`,
-`ui.prominence(key)`, `ui.record(key)` y `Profile::arrange`.
+Floating elements are drawn on upper layers, block what they cover and also
+animate their exit. To adapt components of your own: `ui.affinity(key)`,
+`ui.prominence(key)`, `ui.record(key)` and `Profile::arrange`.
 
-## Documentación con ejemplos
+### Testing
+
+```rust
+use morfo::testing::Harness;
+
+let mut count = 0;
+let mut h = Harness::new();
+let mut app = |ui: &mut morfo::Ui| {
+    ui.label(&format!("Clicked {count} times"));
+    if ui.button("more", "More").clicked {
+        count += 1;
+    }
+};
+h.settle(&mut app);
+h.click("more", &mut app);
+assert!(h.shows("Clicked 1 times"));
+```
+
+## Documentation with examples
 
 ```bash
 cargo run --release -p morfo-demo --bin docs
 ```
 
-Dibuja con la GPU si la hay (si no, con la CPU; `-- --cpu` la fuerza).
+It paints with the GPU if there is one (otherwise with the CPU; `-- --cpu`
+forces it).
 
-### Cambios en vivo mientras desarrollas
+### Live changes while you develop
 
-Lanzada con `cargo run` (el comando de arriba), la documentación se recarga
-sola. Al guardar un fuente (de la demo, del núcleo o de un renderizador)
-recompila en segundo plano y se relanza en el sitio: la misma página, el
-mismo scroll y tema, lo escrito en los campos, y la ventana donde estaba, sin
-quitarle el teclado al editor. Mientras compila lo avisa en una esquina; si no compila, sigue en
-marcha la versión anterior y el aviso muestra el primer error.
+Started with `cargo run` (the command above), the documentation reloads by
+itself. Saving a source file (of the demo, the core or a renderer)
+recompiles in the background and relaunches it in place: the same page, the
+same scroll and theme, what was typed in fields, and the window where it
+was, without taking the keyboard from the editor. While it compiles it says
+so in a corner; if it does not compile, the previous version keeps running
+and the notice shows the first error.
 
-Una recarga tarda lo que tarde la compilación incremental, y en release (por
-el LTO) eso es más de un minuto. Por eso la documentación recarga siempre con
-el perfil `dev`, aunque se arranque con `--release`: entre 1 y 5 s por
-cambio. La primera recarga compila ese perfil entero si aún no existe (unos
-minutos, una sola vez). `MORFO_LIVE_PROFILE=release` mantiene las recargas
-optimizadas y `MORFO_LIVE=0` las desactiva. Un binario lanzado sin
-`cargo run` no vigila nada.
+A reload takes as long as the incremental build, and in release (because of
+LTO) that is over a minute. So the documentation always reloads with the
+`dev` profile, even when started with `--release`: 1 to 5 s per change. The
+first reload builds that profile in full if it does not exist yet (a few
+minutes, once). `MORFO_LIVE_PROFILE=release` keeps reloads optimized and
+`MORFO_LIVE=0` turns them off. A binary started without `cargo run` watches
+nothing.
 
-Para una app propia es el crate `morfo-live` (sin dependencias, Unix):
+For an application of your own it is the `morfo-live` crate (no
+dependencies, Unix):
 
 ```rust
 use morfo_live::{Live, Snapshot, Status};
 
-struct Estado { pagina: usize, nombre: String }
-morfo_live::persist!(Estado { pagina, nombre });   // genera save() y restore()
+struct State { page: usize, name: String }
+morfo_live::persist!(State { page, name });   // generates save() and restore()
 
-// Al arrancar: lo que dejó la compilación anterior, si esto es una recarga.
+// At start-up: what the previous build left, if this is a reload.
 if let Some(snap) = morfo_live::restored() {
-    estado.restore(&snap);
+    state.restore(&snap);
     ui.restore_state(&snap.get::<String>("ui").unwrap_or_default());
 }
-// `despertar` se llama desde otro hilo cuando cambia el estado de la recarga.
-// Recompila con el perfil con que se arrancó; `start_with_profile("dev", …)`
-// hace que las recargas sean rápidas aunque se arranque con `--release`.
-let live = Live::start(despertar);
+// `wake` is called from another thread when the reload's status changes.
+// It rebuilds with the profile it was started with; `start_with_profile("dev", …)`
+// keeps reloads fast even when started with `--release`.
+let live = Live::start(wake);
 
-// En el bucle de eventos:
+// In the event loop:
 match live.status() {
-    Status::Building => ui.notice("live", "Recompilando…"),
+    Status::Building => ui.notice("live", "Rebuilding…"),
     Status::Failed(error) => ui.notice("live", &error),
     Status::Ready => {
         let mut snap = Snapshot::new();
-        estado.save(&mut snap);
+        state.save(&mut snap);
         snap.set("ui", &ui.save_state());
-        live.restart(&snap);   // el proceso pasa a ser la nueva compilación
+        live.restart(&snap);   // the process becomes the new build
     }
     Status::Watching => {}
 }
 ```
 
-Los valores se guardan por nombre: un campo que la nueva compilación ya no
-tiene se ignora y uno nuevo conserva su valor por defecto, así que el estado
-sobrevive a los mismos cambios de código que provocan la recarga. El ejemplo
-completo, con la posición de la ventana, está en `demo/src/bin/docs.rs`.
+Values are kept by name: a field the new build no longer has is ignored and
+a new one keeps its default, so the state survives the same code changes
+that trigger the reload. The complete example, with the window's position,
+is in `demo/src/bin/docs.rs`.
 
-La misma documentación funciona en el navegador:
+The same documentation runs in the browser:
 
 ```bash
 ./web/build.sh && python3 -m http.server -d web 8000
 ```
 
-Necesita `rustup target add wasm32-unknown-unknown` y `wasm-bindgen-cli` en la
-versión de `Cargo.lock`.
+It needs `rustup target add wasm32-unknown-unknown` and `wasm-bindgen-cli`
+at the version in `Cargo.lock`.
 
-La documentación es una app hecha con morfo. Tiene dieciocho páginas (Inicio,
-Botones, Controles, Selección, Cajas, Composición, Formas, Entrada,
-Formularios, Flotantes, Estado y paneles, Navegación, Datos, Gráficos,
-Adaptativo, Mutación, Scroll y Transiciones), ordenadas como un curso de cinco módulos;
-al cambiar de lección, la nueva llega desde el lado hacia el que se avanza. El temario vive
-en el borde izquierdo: se despliega al acercar el cursor, marca las lecciones
-vistas y recuerda el progreso. Arriba a la derecha, una lupa se despliega en
-un buscador de lecciones y acciones (Ctrl+K en escritorio), y al final de
-cada lección hay botones para pasar a la anterior o a la siguiente. Cada página explica un
-grupo de componentes, lo muestra funcionando y enseña el código que lo
-produce. Su fuente, `demo/src/lib.rs`, sirve también de ejemplo completo.
-El perfil de uso se guarda al cerrar en `~/.config/morfo-demo/profile.txt`.
+The documentation is an application made with morfo. It has eighteen pages
+(Home, Buttons, Controls, Selection, Boxes, Composition, Shapes, Input,
+Forms, Floating, Status and panels, Navigation, Data, Charts, Adaptive,
+Morphing, Scrolling and Transitions), ordered as a course of five modules;
+changing lesson, the new one arrives from the side being moved towards. The
+course index lives on the left edge: it unfolds when the pointer comes
+near, marks the lessons seen and remembers the progress. Top right, a
+magnifier unfolds into a search of lessons and actions (Ctrl+K on the
+desktop), and each lesson ends with buttons to the previous and the next
+one. Each page explains a group of components, shows them working and the
+code that produces them. Its source, `demo/src/lib.rs`, is also a complete
+example. The usage profile is saved on exit to
+`~/.config/morfo-demo/profile.txt`.
+
+```bash
+cargo run --release -p morfo-demo --bin bench
+```
+
+Measures what building a frame costs (time, memory allocations and
+primitives) on each page and in scenes of the library alone; with
+`-- --check` it fails if a steady frame allocates memory (CI runs it).
 
 ```bash
 cargo run --release -p morfo-demo --bin snapshot
 ```
 
-Recorre la documentación simulando a un usuario, sin ventana; guarda frames
-PNG en `out/` y mide el trabajo real.
+Walks through the documentation as a user would, without a window; saves PNG
+frames to `out/` and measures the actual work.
 
 ```bash
 cargo test --workspace
 ```
 
-Incluye la comparación píxel a píxel entre GPU y CPU (se salta si no hay GPU).
+Includes the pixel-by-pixel comparison of GPU and CPU (skipped without a
+GPU).
 
-## Medidas
+## Measurements
 
-Con la documentación (`--release`, ventana de 900×780 a 2× = 1800×1560 px,
-portátil de 4 núcleos con otros programas abiertos). Las produce
+With the documentation (`--release`, a 900×780 window at 2× = 1800×1560 px,
+a 4-core laptop with other programs open). They come from
 `cargo run --release -p morfo-demo --bin snapshot`:
 
-| Situación | Pintado por frame | Filas que abarca |
+| Situation | Painting per frame | Rows covered |
 | --- | --- | --- |
-| En reposo | nada | 0 % |
-| Mover el ratón sobre botones | 0,3–0,6 ms | 6 % |
-| Escribir en un campo de texto | 0,2–0,4 ms | 4–7 % |
-| Cambiar de página (todo se mueve) | ~9 ms | 86 % |
-| Abrir un diálogo (oscurece la pantalla) | ~11 ms | 72 % |
+| At rest | nothing | 0 % |
+| Moving the mouse over buttons | 0.3–0.6 ms | 6 % |
+| Typing in a text field | 0.2–0.4 ms | 4–7 % |
+| Changing page (everything moves) | ~9 ms | 86 % |
+| Opening a dialog (dims the screen) | ~11 ms | 72 % |
 
-Construir la interfaz y avanzar todas las animaciones cuesta unos 50 µs por
-frame de media en la documentación (entre 30 y 100 µs según la página), y
-un frame estable del núcleo no asigna memoria. Lo que está lejos de la vista
-no cuenta: una página de scroll con 2000 tarjetas de diez botones se
-construye en 0,17 ms, y una lista virtual cuesta lo mismo con cien filas que
-con veinte mil.
+Building the interface and advancing every animation costs about 50 µs per
+frame on average in the documentation (30 to 100 µs depending on the page),
+and a steady frame of the core allocates no memory. What is far from view
+does not count: a scroll page of 2000 cards of ten buttons is built in
+0.17 ms, and a virtual list costs the same with a hundred rows as with
+twenty thousand.
 
-El renderizador repinta solo el rectángulo que cambia respecto al frame
-anterior, lo reparte en franjas entre hilos y dibuja rectángulos y sombras
-con un rasterizador propio que solo calcula el contorno. El simulador
-comprueba que el resultado incremental es idéntico, píxel a píxel, a un
-repintado completo.
+The CPU renderer repaints only the rectangle that changed since the previous
+frame, splits it into bands across threads and draws rectangles and shadows
+with a rasterizer of its own that only works on the outline. The simulator
+checks that the incremental result is identical, pixel for pixel, to a full
+repaint.
 
-## Estructura
+## Layout
 
-| Ruta | Qué es |
+| Path | What it is |
 | --- | --- |
-| `crates/morfo` | Núcleo sin dependencias (`morfo-ui` en crates.io, se importa como `morfo`): muelles, perfil adaptativo, layout, componentes, accesibilidad, lista de dibujo |
-| `crates/morfo-skia` | Renderizador por CPU con repintado parcial y en paralelo |
-| `crates/morfo-wgpu` | Renderizador por GPU (wgpu): un shader, una llamada por región de recorte |
-| `crates/morfo-web` | Backend web: canvas, eventos del navegador, portapapeles, IME |
-| `crates/morfo-live` | Recarga en vivo durante el desarrollo: vigila los fuentes, recompila y relanza el programa conservando su estado |
-| `demo` | Documentación en ventana (GPU o CPU, AccessKit, portapapeles) y simulador sin ventana |
-| `web` | La documentación compilada a WebAssembly |
+| `crates/morfo` | The dependency-free core (`morfo-ui` on crates.io, imported as `morfo`): springs, adaptive profile, layout, components, accessibility, draw list |
+| `crates/morfo-winit` | A ready window: event loop, GPU or CPU, input, clipboard, AccessKit, system settings and system fonts |
+| `crates/morfo-fonts` | The renderers' fonts: regular, bold, italic, monospaced, and fallbacks for other scripts and symbols |
+| `crates/morfo-skia` | CPU renderer with partial, parallel repaints |
+| `crates/morfo-wgpu` | GPU renderer (wgpu): one shader, one draw call per clip region |
+| `crates/morfo-web` | Web backend: canvas, browser events, clipboard, input methods, ARIA |
+| `crates/morfo-live` | Live reload while developing: watches the sources, rebuilds and relaunches the program keeping its state |
+| `demo` | Windowed documentation (GPU or CPU, AccessKit, clipboard), benchmark and windowless simulator |
+| `web` | The documentation compiled to WebAssembly |
 
-## Limitaciones actuales
+## Current limitations
 
-- La recarga en vivo relanza el programa entero (solo en Unix): lo que no se
-  guarde en el `Snapshot` empieza de nuevo, la ventana parpadea un instante y
-  en Wayland vuelve donde el compositor decida.
-- Una fuente normal y una monoespaciada; sin negritas, cursivas ni texto
-  bidireccional (árabe, hebreo).
-- La tabla dibuja todas sus filas; para miles de filas, `virtual_list` o
-  paginarla.
-- El scroll es vertical y con rueda (sin arrastrar la barra). Dentro de un
-  área de scroll, las tarjetas lejos de la vista no se construyen: conservan
-  el tamaño que tenían la última vez que se vieron, así que si su contenido
-  cambia de tamaño mientras tanto, solo ocupa el nuevo al acercarse, y
-  `find` no encuentra lo que contienen. El resto del contenido fuera de la
-  vista no se dibuja, pero sí pasa por el layout. `set_lazy(false)` lo
-  desactiva.
-- `virtual_list` coloca las filas con exactitud hasta unas decenas de miles;
-  mucho más allá pueden quedar a una fracción de píxel de su sitio.
-- Durante una mutación, una transición o una entrada con `scroll_reveal`, los
-  controles nuevos ya responden en su posición final, aunque aún se estén
-  dibujando a medio camino. La vista que se va en una transición es solo una
-  imagen: no responde, y lo que tenía en capas flotantes desaparece al momento.
-- `title_bar` no mueve ni cierra la ventana por sí misma: devuelve lo que
-  pidió el usuario y el programa lo hace. Arrastrar y redimensionar dependen
-  del gestor de ventanas.
-- La accesibilidad describe cada elemento por separado, sin jerarquía (las
-  tarjetas no agrupan a sus hijos para el lector de pantalla).
-- En la web el texto lo dibuja el navegador con fuentes del sistema, así que
-  puede variar algún píxel respecto al escritorio, y el recorte es
-  rectangular.
-- El backend por CPU recorta por rectángulos: ignora el radio de las
-  esquinas de un recorte.
-- Los hábitos por hora del día necesitan que el programa indique la zona
-  horaria (`Profile::time_of_day`); la demo y la web lo hacen.
+- Live reload relaunches the whole program (Unix only): whatever is not kept
+  in the `Snapshot` starts over, the window flickers for an instant and on
+  Wayland it comes back where the compositor decides.
+- Right-to-left text is a simplified bidirectional algorithm (no explicit
+  embedding marks), and Arabic is drawn with its letters unjoined: there is
+  no text shaping, so Indic scripts are not drawn right either. Inside a
+  text field, text is shown in the order it is stored. Arrow keys are not
+  swapped in a mirrored interface.
+- Without an italic font, italic is drawn upright; without a bold one, bold
+  is imitated by drawing twice.
+- No background blur (frosted glass): too costly for a CPU renderer that
+  repaints only what changes.
+- One window: menus, dialogs and notices are drawn inside it.
+- The core needs `std` (there is no `no_std` build for microcontrollers).
+- The table draws all its rows; for thousands of rows, use `virtual_list` or
+  paginate.
+- Scrolling is vertical (wheel, scroll bar, touch drag with momentum,
+  PageUp/PageDown). Inside a scroll area, cards far from view are not built:
+  they keep the size they had when last seen, so if their content changes
+  size meanwhile, the new size only shows as they come near, and `find` does
+  not find what they hold. The rest of the content out of view is not drawn
+  but is laid out. `set_lazy(false)` turns it off.
+- `virtual_list` places rows exactly up to some tens of thousands; far
+  beyond that they may be a fraction of a pixel off.
+- During a morph, a transition or a `scroll_reveal` entrance, new controls
+  already respond at their final position, even while still drawn halfway.
+  The view leaving in a transition is just a picture: it does not respond,
+  and what it had on floating layers disappears at once.
+- `title_bar` does not move or close the window itself: it returns what the
+  user asked for and the program does it. Dragging and resizing depend on
+  the window manager.
+- On the web, text is drawn by the browser with system fonts, so a pixel may
+  differ from the desktop; clipping is rectangular, and images are not
+  tinted in color (only in opacity).
+- The CPU backend clips by rectangles: it ignores the corner radius of a
+  clip.
+- Time-of-day habits need the program to give the time zone
+  (`Profile::time_of_day`); `morfo-winit`, the demo and the web do.
 
-## Contribuir
+## Contributing
 
-Las contribuciones son bienvenidas. Lee [CONTRIBUTING.md](CONTRIBUTING.md)
-antes de abrir un PR y respeta el [código de conducta](CODE_OF_CONDUCT.md).
-Los fallos de seguridad se informan en privado: [SECURITY.md](SECURITY.md).
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a PR and follow the [code of conduct](CODE_OF_CONDUCT.md). Security
+issues are reported privately: [SECURITY.md](SECURITY.md).
 
-## Licencia
+## License
 
-MIT o Apache-2.0, a tu elección.
+MIT or Apache-2.0, at your option.

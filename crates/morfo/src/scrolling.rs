@@ -29,6 +29,7 @@ pub(crate) struct ScrollCtx {
 
 /// How content enters when it scrolls into view ([`Ui::scroll_reveal`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Reveal {
     /// It fades in where it is.
     Fade,
@@ -56,29 +57,6 @@ const MAX_DELAY: f64 = 0.6;
 /// How fast a number counts up: a long, unhurried spring.
 const COUNT: Spring = Spring::new(1.2, 1.0);
 
-/// `v` with `decimals` decimals, a decimal comma and, from five digits on,
-/// thousands separated by dots: `12.480`, `98,6`.
-pub(crate) fn format_number(v: f32, decimals: usize) -> String {
-    let text = format!("{:.*}", decimals, v.abs());
-    let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
-    let mut out = String::new();
-    if v < 0.0 && text.chars().any(|c| c.is_ascii_digit() && c != '0') {
-        out.push('-');
-    }
-    let digits = int.len();
-    for (i, c) in int.chars().enumerate() {
-        if digits > 4 && i > 0 && (digits - i).is_multiple_of(3) {
-            out.push('.');
-        }
-        out.push(c);
-    }
-    if !frac.is_empty() {
-        out.push(',');
-        out.push_str(frac);
-    }
-    out
-}
-
 impl Ui {
     /// The innermost scroll area being laid out, if any.
     fn scroll_ctx(&self) -> Option<ScrollCtx> {
@@ -96,7 +74,7 @@ impl Ui {
     /// view in the same frame start one after another.
     pub(crate) fn appear(&mut self, id: Id, rect: Rect) -> f32 {
         let view = self.view_rect();
-        let (now, frame, instant) = (self.now, self.frame, self.instant);
+        let (now, frame, instant, reduced) = (self.now, self.frame, self.still, self.reduced_motion());
         let k = self.steps[Smooth as usize];
         let (batch, waking) = (self.reveal_batch, self.waking);
         let n = self.nodes.entry(id).or_insert_with(Node::new);
@@ -121,7 +99,8 @@ impl Ui {
         let mut arrived = false;
         if settled && visible && !n.latch {
             n.latch = true;
-            n.stamp = now + (batch as f64 * STAGGER).min(MAX_DELAY);
+            // With reduced motion they do not wait for one another.
+            n.stamp = if reduced { now } else { now + (batch as f64 * STAGGER).min(MAX_DELAY) };
             arrived = true;
         }
         let mut wake = None;
@@ -153,6 +132,8 @@ impl Ui {
     /// drawing does, so nothing around it jumps.
     pub fn scroll_reveal(&mut self, key: &str, style: Reveal, f: impl FnOnce(&mut Ui)) {
         let id = self.declare(key);
+        // With reduced motion every entrance is a fade, where it is.
+        let style = if self.reduced_motion() { Reveal::Fade } else { style };
         let prev = self.sizes.get(&id).copied().unwrap_or(Vec2::ZERO);
         let at = self.peek(prev);
         let p = self.appear(id.child("morfo-aparece"), Rect::from_min_size(at, prev));
@@ -187,11 +168,12 @@ impl Ui {
 
     /// A number in text of size `size` that counts up from zero the first
     /// time it scrolls into view, and glides to any new `value` afterwards.
-    /// It shows `decimals` decimals, with a decimal comma. Its width is that
-    /// of the final number, so what follows it never moves.
+    /// It shows `decimals` decimals, written as the
+    /// [`locale`](Self::set_locale) writes numbers. Its width is that of the
+    /// final number, so what follows it never moves.
     pub fn count_up(&mut self, key: &str, value: f32, decimals: usize, size: f32) {
         let id = self.declare(key);
-        let last = format_number(value, decimals);
+        let last = self.locale.number(value as f64, decimals);
         let w = self.text.width(&last, size) + 2.0;
         let target = self.alloc(Vec2::new(w, size * LINE_HEIGHT));
         let (r, life) = self.enter(id, target, Smooth);
@@ -204,6 +186,10 @@ impl Ui {
             n.e1.snap(if self.waking { value } else { 0.0 });
         }
         let goal = if p > 0.0 { value } else { 0.0 };
+        // Counting is decoration: with reduced motion the number is there.
+        if self.motion != crate::anim::MotionPreference::Full || self.instant {
+            n.e1.snap(goal);
+        }
         let mut anim = n.e1.drive(goal, false, &k);
         // Once it reads as the final number, it is there.
         if anim && (n.e1.get() - goal).abs() < 0.5 * 0.1f32.powi(decimals as i32) {
@@ -212,7 +198,7 @@ impl Ui {
         }
         let shown = n.e1.get();
         self.animating |= anim;
-        let text = if anim { format_number(shown, decimals) } else { last };
+        let text = if anim { self.locale.number(shown as f64, decimals) } else { last };
         let a = self.alpha * life * smoothstep(p.clamp(0.0, 1.0) * 3.0);
         self.draw.add_text(r.min(), size, self.pal[TEXT].fade(a), &text);
     }
@@ -229,8 +215,9 @@ impl Ui {
         let width = self.available_width();
         let target = self.alloc(Vec2::new(width, height));
         let (r, life) = self.enter(id, target, Smooth);
-        // How far the window is from the middle of what is seen.
-        let rel = target.center().y - self.view_rect().center().y;
+        // How far the window is from the middle of what is seen. With
+        // reduced motion the layers move with the page: no depth.
+        let rel = if self.reduced_motion() { 0.0 } else { target.center().y - self.view_rect().center().y };
         let radius = self.theme.radius;
         let (clip, alpha) = (self.clip, self.alpha);
         self.clip = Some(clip.map_or(r, |c| c.intersect(&r)));
@@ -377,20 +364,5 @@ impl Ui {
     /// position: a button that appears, a header that darkens.
     pub fn scroll_linked(&self, from: f32, to: f32) -> f32 {
         self.scroll_ctx().map_or(0.0, |c| ((c.offset - from) / (to - from).max(1e-3)).clamp(0.0, 1.0))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_number;
-
-    #[test]
-    fn numbers_read_the_spanish_way() {
-        assert_eq!(format_number(12480.0, 0), "12.480");
-        assert_eq!(format_number(1250.0, 0), "1250");
-        assert_eq!(format_number(98.64, 1), "98,6");
-        assert_eq!(format_number(1234567.0, 0), "1.234.567");
-        assert_eq!(format_number(-3.5, 1), "-3,5");
-        assert_eq!(format_number(-0.01, 1), "0,0");
     }
 }

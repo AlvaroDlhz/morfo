@@ -16,6 +16,7 @@ use crate::ui::{Dir, Node, Ui};
 /// move sideways follow the direction of travel: forward (a higher view
 /// number) enters from the right, back from the left.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Transition {
     /// The old view fades out as the new one fades in.
     Fade,
@@ -140,6 +141,8 @@ impl Ui {
     /// ```
     pub fn transition(&mut self, key: &str, view: usize, style: Transition, f: impl FnOnce(&mut Ui)) {
         let id = self.declare(key);
+        // With reduced motion every choreography is a cross-fade.
+        let style = if self.reduced_motion() { Transition::Fade } else { style };
         let mut st = self.swaps.remove(&id).unwrap_or_default();
         let n = self.nodes.entry(id).or_insert_with(Node::new);
         let absent = n.touch(self.frame);
@@ -267,7 +270,8 @@ impl Ui {
         self.advance(size);
         let target = Rect::from_min_size(origin, size);
         let (smooth, frame) = (self.steps[Smooth as usize], self.frame);
-        let (collect, in_scroll) = (self.collect_heroes, !self.scrolls.is_empty());
+        // With reduced motion nothing flies: the new place simply shows it.
+        let (collect, in_scroll) = (self.collect_heroes && !self.reduced_motion(), !self.scrolls.is_empty() || self.reduced_motion());
         let shift = self.shift;
         let n = self.nodes.entry(id).or_insert_with(Node::new);
         if n.latch {

@@ -8,12 +8,14 @@
 //! browser for a frame when there was input or something is still moving —
 //! at rest the page does no work at all.
 
+mod access;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use morfo::ui::LINE_HEIGHT;
-use morfo::{Color, DrawCmd, DrawList, Key, Modifiers, Profile, Rect, TextMeasure, Theme, Ui, Vec2};
+use morfo::{Color, DrawCmd, DrawList, ImageId, Key, Modifiers, Profile, Rect, TextMeasure, TextStyle, Theme, Ui, Vec2};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
@@ -27,23 +29,30 @@ fn css(c: Color) -> String {
     format!("rgba({r},{g},{b},{})", c.a.clamp(0.0, 1.0))
 }
 
-fn font(size: f32, mono: bool) -> String {
-    format!("{size}px {}", if mono { MONO } else { SANS })
+/// The CSS font for text of `style` at `size`.
+fn font(size: f32, style: TextStyle) -> String {
+    let italic = if style.italic() { "italic " } else { "" };
+    let bold = if style.bold() { "bold " } else { "" };
+    format!("{italic}{bold}{size}px {}", if style.mono() { MONO } else { SANS })
 }
 
 /// Text metrics from the canvas itself (cached), for [`Ui::set_text_measure`].
 pub struct CanvasMeasure {
     ctx: CanvasRenderingContext2d,
-    cache: RefCell<HashMap<(String, u32), f32>>,
+    cache: RefCell<HashMap<(String, u32, TextStyle), f32>>,
 }
 
 impl TextMeasure for CanvasMeasure {
     fn width(&self, text: &str, size: f32) -> f32 {
-        let key = (text.to_string(), size.to_bits());
+        self.width_styled(text, size, TextStyle::REGULAR)
+    }
+
+    fn width_styled(&self, text: &str, size: f32, style: TextStyle) -> f32 {
+        let key = (text.to_string(), size.to_bits(), style);
         if let Some(&w) = self.cache.borrow().get(&key) {
             return w;
         }
-        self.ctx.set_font(&font(size, false));
+        self.ctx.set_font(&font(size, style));
         let w = self.ctx.measure_text(text).map_or(0.0, |m| m.width() as f32);
         let mut cache = self.cache.borrow_mut();
         if cache.len() > 8192 {
@@ -57,12 +66,14 @@ impl TextMeasure for CanvasMeasure {
 /// Paints draw lists with the canvas 2D API.
 pub struct CanvasRenderer {
     ctx: CanvasRenderingContext2d,
+    /// Each image in a canvas of its own, with the version it holds.
+    images: RefCell<HashMap<ImageId, (u32, HtmlCanvasElement)>>,
 }
 
 impl CanvasRenderer {
     pub fn new(canvas: &HtmlCanvasElement) -> Result<CanvasRenderer, JsValue> {
         let ctx = canvas.get_context("2d")?.ok_or("no 2d context")?.dyn_into::<CanvasRenderingContext2d>()?;
-        Ok(CanvasRenderer { ctx })
+        Ok(CanvasRenderer { ctx, images: RefCell::new(HashMap::new()) })
     }
 
     pub fn measure(&self) -> CanvasMeasure {
@@ -94,6 +105,14 @@ impl CanvasRenderer {
                         ctx.stroke();
                     }
                 }
+                DrawCmd::Gradient { rect, radius, from, to, start, end } => {
+                    let g = ctx.create_linear_gradient(from.x as f64, from.y as f64, to.x as f64, to.y as f64);
+                    let _ = g.add_color_stop(0.0, &css(start));
+                    let _ = g.add_color_stop(1.0, &css(end));
+                    rounded(ctx, rect, radius);
+                    ctx.set_fill_style_canvas_gradient(&g);
+                    ctx.fill();
+                }
                 DrawCmd::Shadow { rect, radius, blur, offset, color } => {
                     // The canvas blurs in device pixels, untouched by the transform.
                     ctx.save();
@@ -105,10 +124,18 @@ impl CanvasRenderer {
                     ctx.fill();
                     ctx.restore();
                 }
-                DrawCmd::Text { pos, size, color, start, len, mono } => {
-                    ctx.set_font(&font(size, mono));
+                DrawCmd::Text { pos, size, color, start, len, style } => {
+                    ctx.set_font(&font(size, style));
                     ctx.set_fill_style_str(&css(color));
-                    let _ = ctx.fill_text(list.text(start, len), pos.x as f64, (pos.y + size * LINE_HEIGHT * 0.5) as f64);
+                    let text = list.text(start, len);
+                    let y = (pos.y + size * LINE_HEIGHT * 0.5) as f64;
+                    let _ = if morfo::bidi::has_rtl(text) {
+                        // Already in the order it is read: the canvas must
+                        // not reorder it again (left-to-right override).
+                        ctx.fill_text(&format!("\u{202D}{text}\u{202C}"), pos.x as f64, y)
+                    } else {
+                        ctx.fill_text(text, pos.x as f64, y)
+                    };
                 }
                 DrawCmd::Line { from, to, width, color } => {
                     ctx.begin_path();
@@ -136,8 +163,51 @@ impl CanvasRenderer {
                     ctx.clip();
                 }
                 DrawCmd::PopClip => ctx.restore(),
+                DrawCmd::Image { rect, radius, image, version, uv, tint } => {
+                    let Some(source) = self.image_canvas(list, image, version) else { continue };
+                    let (w, h) = (source.width() as f64, source.height() as f64);
+                    ctx.save();
+                    rounded(ctx, rect, radius);
+                    ctx.clip();
+                    // The canvas cannot tint: only the opacity is honored.
+                    ctx.set_global_alpha(tint.a.clamp(0.0, 1.0) as f64);
+                    let _ = ctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                        &source,
+                        uv.x as f64 * w,
+                        uv.y as f64 * h,
+                        uv.w as f64 * w,
+                        uv.h as f64 * h,
+                        rect.x as f64,
+                        rect.y as f64,
+                        rect.w as f64,
+                        rect.h as f64,
+                    );
+                    ctx.restore();
+                }
+                _ => {}
             }
         }
+        // Images no longer registered are dropped.
+        self.images.borrow_mut().retain(|id, _| list.image(*id).is_some());
+    }
+
+    /// The canvas holding image `id` at `version`, drawn the first time it
+    /// is needed.
+    fn image_canvas(&self, list: &DrawList, id: ImageId, version: u32) -> Option<HtmlCanvasElement> {
+        if let Some((v, canvas)) = self.images.borrow().get(&id) {
+            if *v == version {
+                return Some(canvas.clone());
+            }
+        }
+        let data = list.image(id)?;
+        let canvas = web_sys::window()?.document()?.create_element("canvas").ok()?.dyn_into::<HtmlCanvasElement>().ok()?;
+        canvas.set_width(data.width);
+        canvas.set_height(data.height);
+        let ctx = canvas.get_context("2d").ok()??.dyn_into::<CanvasRenderingContext2d>().ok()?;
+        let pixels = web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(&data.rgba), data.width, data.height).ok()?;
+        ctx.put_image_data(&pixels, 0.0, 0.0).ok()?;
+        self.images.borrow_mut().insert(id, (version, canvas.clone()));
+        Some(canvas)
     }
 }
 
@@ -165,6 +235,8 @@ struct Host {
     frame: Option<Closure<dyn FnMut()>>,
     /// Unix time when the page's clock started.
     start: f64,
+    /// The interface mirrored for screen readers.
+    mirror: Option<access::Mirror>,
 }
 
 type Shared = Rc<RefCell<Host>>;
@@ -198,9 +270,26 @@ fn frame(host: &Shared) {
             h.canvas.set_height(ph);
         }
         let now = h.start + window().performance().map_or(0.0, |p| p.now() / 1000.0);
+        // What a screen reader asked for since the last frame.
+        if let Some(m) = h.mirror.as_mut() {
+            let r = std::mem::take(&mut *m.requests.borrow_mut());
+            if r.enable && !m.on {
+                m.on = true;
+                h.ui.set_accessibility(true);
+            }
+            if let Some(id) = r.focus {
+                h.ui.access_focus(id);
+            }
+            if let Some(id) = r.click {
+                h.ui.access_click(id);
+            }
+        }
         h.ui.begin(now, size);
         (h.build)(&mut h.ui);
         let f = h.ui.end();
+        if let Some(m) = h.mirror.as_mut() {
+            m.sync(&h.ui, (h.canvas.offset_left() as f64, h.canvas.offset_top() as f64));
+        }
         h.renderer.render(h.ui.draw_list(), size, scale, h.ui.background());
         if let Some(text) = h.ui.take_clipboard() {
             let _ = window().navigator().clipboard().write_text(&text);
@@ -234,6 +323,8 @@ fn key(k: &str) -> Option<Key> {
         "ArrowDown" => Key::Down,
         "Home" => Key::Home,
         "End" => Key::End,
+        "PageUp" => Key::PageUp,
+        "PageDown" => Key::PageDown,
         "Enter" => Key::Enter,
         "Escape" => Key::Escape,
         "Tab" => Key::Tab,
@@ -305,37 +396,73 @@ pub fn run(canvas_id: &str, theme: Theme, build: impl FnMut(&mut Ui) + 'static) 
         scheduled: false,
         frame: None,
         start,
+        mirror: None,
     }));
+    // Screen readers: the mirror, and a frame whenever the reader acts.
+    if let Ok(m) = access::Mirror::new(&document, &canvas, &document.title()) {
+        for target in [m.root.clone(), m.enable.clone()] {
+            for kind in ["focusin", "click", "keydown"] {
+                let h = host.clone();
+                listen(target.as_ref(), kind, true, move |_: web_sys::Event| schedule(&h));
+            }
+        }
+        // `?a11y` in the address starts with it on.
+        if window().location().search().is_ok_and(|q| q.contains("a11y")) {
+            m.requests.borrow_mut().enable = true;
+        }
+        host.borrow_mut().mirror = Some(m);
+    }
     let h = host.clone();
     host.borrow_mut().frame = Some(Closure::new(move || frame(&h)));
 
     let target: &web_sys::EventTarget = canvas.as_ref();
-    let with = |host: &Shared, f: fn(&mut Ui, Vec2)| {
+    // A finger is the pointer too, with touch manners (dragging scrolls,
+    // no hover); only the first finger counts.
+    let with = |host: &Shared, mouse: fn(&mut Ui, Vec2), finger: fn(&mut Ui, Vec2)| {
         let host = host.clone();
         move |e: web_sys::PointerEvent| {
-            f(&mut host.borrow_mut().ui, Vec2::new(e.offset_x() as f32, e.offset_y() as f32));
+            let at = Vec2::new(e.offset_x() as f32, e.offset_y() as f32);
+            if e.pointer_type() == "touch" {
+                if e.is_primary() {
+                    finger(&mut host.borrow_mut().ui, at);
+                }
+            } else {
+                mouse(&mut host.borrow_mut().ui, at);
+            }
             schedule(&host);
         }
     };
-    listen(target, "pointermove", true, with(&host, |ui, p| ui.pointer_moved(p)));
-    listen(target, "pointerleave", true, with(&host, |ui, _| ui.pointer_left()));
+    listen(target, "pointermove", true, with(&host, |ui, p| ui.pointer_moved(p), |ui, p| ui.touch_moved(p)));
+    listen(target, "pointerleave", true, with(&host, |ui, _| ui.pointer_left(), |_, _| {}));
+    listen(target, "pointercancel", true, with(&host, |ui, _| ui.pointer_left(), |ui, p| ui.touch_ended(p, true)));
     listen(
         target,
         "pointerup",
         true,
-        with(&host, |ui, p| {
-            ui.pointer_moved(p);
-            ui.pointer_released();
-        }),
+        with(
+            &host,
+            |ui, p| {
+                ui.pointer_moved(p);
+                ui.pointer_released();
+            },
+            |ui, p| ui.touch_ended(p, false),
+        ),
     );
     {
         let (host, canvas, input) = (host.clone(), canvas.clone(), input.clone());
         listen(target, "pointerdown", true, move |e: web_sys::PointerEvent| {
             let _ = input.focus();
             let _ = canvas.set_pointer_capture(e.pointer_id());
+            let at = Vec2::new(e.offset_x() as f32, e.offset_y() as f32);
             let mut h = host.borrow_mut();
-            h.ui.pointer_moved(Vec2::new(e.offset_x() as f32, e.offset_y() as f32));
-            h.ui.pointer_pressed();
+            if e.pointer_type() == "touch" {
+                if e.is_primary() {
+                    h.ui.touch_started(at);
+                }
+            } else {
+                h.ui.pointer_moved(at);
+                h.ui.pointer_pressed();
+            }
             drop(h);
             schedule(&host);
         });
@@ -369,8 +496,19 @@ pub fn run(canvas_id: &str, theme: Theme, build: impl FnMut(&mut Ui) + 'static) 
                     }
                     "c" => h.ui.key_pressed(Key::Copy),
                     "x" => h.ui.key_pressed(Key::Cut),
+                    "z" | "y" => {
+                        // The browser's own undo would act on the hidden text area.
+                        e.prevent_default();
+                        h.ui.key_pressed(if k.eq_ignore_ascii_case("y") || mods.shift { Key::Redo } else { Key::Undo })
+                    }
                     // Ctrl+V arrives as a paste event, with the text.
-                    _ => {}
+                    _ => {
+                        // Ctrl with the arrows or Backspace goes by words.
+                        if let Some(key) = key(&k) {
+                            e.prevent_default();
+                            h.ui.key_pressed(key);
+                        }
+                    }
                 }
             } else if let Some(key) = key(&k) {
                 // Keep Tab, Space and the arrows inside the interface.

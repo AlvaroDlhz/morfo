@@ -140,7 +140,7 @@ impl Ui {
         // Course header: title, size, and progress.
         let mut text = String::new();
         self.draw.add_text(Vec2::new(x0, at(0.0)), font * 1.15, pal[TEXT].fade(ink), title);
-        let _ = write!(text, "{} módulos · {} lecciones", modules.len(), total);
+        text.push_str(&crate::locale::Locale::fill(self.locale.course_summary, &[&modules.len(), &total]));
         self.draw.add_text(Vec2::new(x0, at(font * 1.15 * LINE_HEIGHT)), font * 0.9, pal[MUTED].fade(ink), &text);
         let bar_y = at(font * 1.15 * LINE_HEIGHT + font * 0.9 * LINE_HEIGHT + 10.0);
         let bar_w = full.w - theme.pad * 2.0 - 64.0;
@@ -198,7 +198,7 @@ impl Ui {
             let (fill, stroke) = if complete { (pal[ACCENT], pal[ACCENT]) } else { (pal[RAISED], pal[ACCENT].mix(pal[BORDER], 0.4)) };
             self.draw.rect_stroked(marker, 4.0, fill.fade(ink), stroke.fade(ink), 2.0);
             text.clear();
-            let _ = write!(text, "MÓDULO {}", m + 1);
+            text.push_str(&crate::locale::Locale::fill(self.locale.module, &[&(m + 1)]));
             self.draw.add_text(Vec2::new(text_x, hy), font * 0.72, pal[ACCENT].mix(pal[MUTED], 0.3).fade(ink), &text);
             self.draw.add_text(Vec2::new(text_x, hy + font * 0.72 * LINE_HEIGHT), font * 0.98, pal[TEXT].fade(ink), name);
             text.clear();

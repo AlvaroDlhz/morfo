@@ -171,10 +171,10 @@ impl Ui {
                 continue;
             }
             match map(cmd, snap.bounds, to, fade) {
-                DrawCmd::Text { pos, size, color, start, len, mono } => {
+                DrawCmd::Text { pos, size, color, start, len, style } => {
                     if color.a > 0.002 && size > 0.5 {
                         let text = &snap.text[start as usize..(start + len) as usize];
-                        self.draw.add_text_styled(pos, size, color, text, mono);
+                        self.draw.add_text_styled(pos, size, color, text, style);
                     }
                 }
                 DrawCmd::Polygon { start, len, color } => {
@@ -218,7 +218,7 @@ impl Ui {
 /// must stay balanced.
 fn in_hole(cmd: &DrawCmd, points: &[Vec2], holes: &[Rect]) -> bool {
     let r = match *cmd {
-        DrawCmd::Rect { rect, .. } | DrawCmd::Shadow { rect, .. } => rect,
+        DrawCmd::Rect { rect, .. } | DrawCmd::Shadow { rect, .. } | DrawCmd::Image { rect, .. } | DrawCmd::Gradient { rect, .. } => rect,
         DrawCmd::Text { pos, size, .. } => Rect::new(pos.x, pos.y, 1.0, size),
         DrawCmd::Line { from, to, .. } => Rect::new(from.x.min(to.x), from.y.min(to.y), (from.x - to.x).abs(), (from.y - to.y).abs()),
         DrawCmd::Polygon { start, len, .. } => {
@@ -283,11 +283,17 @@ fn map(cmd: DrawCmd, from: Rect, to: Rect, fade: f32) -> DrawCmd {
         },
         // Text is never stretched, and only scaled within limits: a word
         // blown up or shrunk to a speck reads as noise, not as motion.
-        DrawCmd::Text { pos, size, color, start, len, mono } => {
-            DrawCmd::Text { pos: p(pos), size: size * s.clamp(0.6, 1.4), color: color.fade(fade), start, len, mono }
+        DrawCmd::Text { pos, size, color, start, len, style } => {
+            DrawCmd::Text { pos: p(pos), size: size * s.clamp(0.6, 1.4), color: color.fade(fade), start, len, style }
         }
         DrawCmd::Line { from: a, to: b, width, color } => DrawCmd::Line { from: p(a), to: p(b), width: width * s, color: color.fade(fade) },
         DrawCmd::PushClip { rect, radius } => DrawCmd::PushClip { rect: r(rect), radius: radius * s },
+        DrawCmd::Gradient { rect, radius, from: a, to: b, start, end } => {
+            DrawCmd::Gradient { rect: r(rect), radius: radius * s, from: p(a), to: p(b), start: start.fade(fade), end: end.fade(fade) }
+        }
+        DrawCmd::Image { rect, radius, image, version, uv, tint } => {
+            DrawCmd::Image { rect: r(rect), radius: radius * s, image, version, uv, tint: tint.fade(fade) }
+        }
         // Points are remapped by the caller, which owns them.
         DrawCmd::Polygon { start, len, color } => DrawCmd::Polygon { start, len, color: color.fade(fade) },
         other => other,
@@ -336,6 +342,8 @@ fn emit(list: &mut DrawList, cmd: DrawCmd) {
         DrawCmd::Text { color, size, .. } => color.a > 0.002 && size > 0.5,
         DrawCmd::Line { color, .. } => color.a > 0.002,
         DrawCmd::Polygon { color, .. } => color.a > 0.002,
+        DrawCmd::Image { tint, .. } => tint.a > 0.002,
+        DrawCmd::Gradient { start, end, .. } => start.a > 0.002 || end.a > 0.002,
         _ => true,
     };
     if visible {

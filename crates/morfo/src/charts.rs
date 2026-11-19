@@ -53,7 +53,7 @@ pub(crate) fn nice_axis(min: f32, max: f32) -> (f32, f32, f32) {
 }
 
 /// A number as short text, Spanish style: `1250` → `1,3k`, `12.5` → `12,5`.
-pub(crate) fn short_number(v: f32, out: &mut String) {
+pub(crate) fn short_number(v: f32, decimal: char, out: &mut String) {
     out.clear();
     let a = v.abs();
     if a >= 10_000.0 {
@@ -65,8 +65,11 @@ pub(crate) fn short_number(v: f32, out: &mut String) {
     } else {
         let _ = write!(out, "{:.1}", v);
     }
-    if out.contains('.') {
-        *out = out.replace('.', ",");
+    if decimal != '.' {
+        if let Some(at) = out.find('.') {
+            let mut buf = [0u8; 4];
+            out.replace_range(at..at + 1, decimal.encode_utf8(&mut buf));
+        }
     }
 }
 
@@ -143,6 +146,7 @@ impl Ui {
     /// current (animated) one. The lines sit on round values and slide while the
     /// scale changes.
     fn chart_grid(&mut self, plot: Rect, (lo, hi): (f32, f32), axis: (f32, f32, f32), axis_w: f32, font: f32, a: f32) {
+        let dec = self.locale.decimal;
         let mut label = String::new();
         let (from, to, step) = axis;
         let count = ((to - from) / step).round() as usize;
@@ -155,7 +159,7 @@ impl Ui {
             let base = v.abs() < step * 0.001;
             let color = if base { self.pal[BORDER] } else { self.pal[BORDER].with_alpha(0.55) };
             self.draw.line(Vec2::new(plot.x, y), Vec2::new(plot.right(), y), 1.0, color.fade(a));
-            short_number(v, &mut label);
+            short_number(v, dec, &mut label);
             let w = self.text.width(&label, font);
             self.draw.add_text(Vec2::new(plot.x - axis_w + (axis_w - 10.0 - w), y - font * LINE_HEIGHT * 0.5), font, self.pal[MUTED].fade(a), &label);
         }
@@ -166,6 +170,7 @@ impl Ui {
     /// reordering the data moves them sideways. Hovering shows the value.
     /// Returns the index of the bar clicked.
     pub fn bar_chart(&mut self, key: &str, labels: &[&str], values: &[f32], size: Vec2) -> Option<usize> {
+        let dec = self.locale.decimal;
         let id = self.declare(key);
         let count = labels.len().min(values.len());
         let font = self.theme.font * 0.8;
@@ -176,7 +181,7 @@ impl Ui {
         let axis = nice_axis(0.0, values[..count].iter().fold(0.0f32, |m, &v| m.max(v)));
         let (_, hi) = self.chart_scale(id, 0.0, axis.1);
         let mut label = String::new();
-        short_number(axis.1, &mut label);
+        short_number(axis.1, dec, &mut label);
         let axis_w = self.text.width(&label, font) + 14.0;
         let plot = Rect::new(r.x + axis_w, r.y + lh * 0.5, (r.w - axis_w).max(1.0), (r.h - lh * 1.5 - 8.0).max(1.0));
         self.chart_grid(plot, (0.0, hi), axis, axis_w, font, a);
@@ -191,7 +196,7 @@ impl Ui {
             let (br, bl) = self.enter(bid, Rect::new(x, plot.bottom() - h, bw, h), Smooth);
             let column = Rect::new(plot.x + slot * i as f32, plot.y, slot, plot.h + lh + 8.0);
             let hit = self.hit(bid, column);
-            short_number(values[i], &mut label);
+            short_number(values[i], dec, &mut label);
             self.describe(bid, Role::Label, labels[i], column, Some(&label), None);
             if hit.clicked {
                 clicked = Some(i);
@@ -219,6 +224,7 @@ impl Ui {
     /// values, so switching datasets morphs the lines. Hovering shows a guide
     /// with every series' value there. Returns the index under the pointer.
     pub fn line_chart(&mut self, key: &str, labels: &[&str], series: &[(&str, &[f32])], size: Vec2) -> Option<usize> {
+        let dec = self.locale.decimal;
         let id = self.declare(key);
         let count = labels.len();
         let font = self.theme.font * 0.8;
@@ -241,7 +247,7 @@ impl Ui {
             x += 15.0 + self.text.width(name, font) + 18.0;
         }
         let mut label = String::new();
-        short_number(axis.1, &mut label);
+        short_number(axis.1, dec, &mut label);
         let axis_w = self.text.width(&label, font).max(self.text.width("-0", font)) + 14.0;
         let plot = Rect::new(r.x + axis_w, r.y + legend + lh * 0.5, (r.w - axis_w - 8.0).max(1.0), (r.h - legend - lh * 1.5 - 8.0).max(1.0));
         self.chart_grid(plot, (lo, hi), axis, axis_w, font, a);
@@ -308,13 +314,15 @@ impl Ui {
                 self.draw.rect(Rect::new(p.x - 6.0, p.y - 6.0, 12.0, 12.0), 12.0, self.pal[RAISED].fade(a));
                 self.draw.rect(Rect::new(p.x - 4.0, p.y - 4.0, 8.0, 8.0), 8.0, c.fade(a));
                 top = top.min(p.y);
-                short_number(values[i], &mut label);
+                short_number(values[i], dec, &mut label);
                 rows.push((c, if series.len() > 1 { format!("{name}: {label}") } else { label.clone() }));
             }
             (Vec2::new(xs(i), top), rows)
         });
         if self.a11y_on {
-            let summary = series.iter().map(|(n, v)| format!("{n}: {} valores", v.len())).collect::<Vec<_>>().join(", ");
+            let values = self.locale.values;
+            let summary =
+                series.iter().map(|(n, v)| format!("{n}: {}", crate::locale::Locale::fill(values, &[&v.len()]))).collect::<Vec<_>>().join(", ");
             self.describe(id, Role::Label, key, r, Some(&summary), None);
         }
         self.chart_tip(id, tip);
@@ -365,6 +373,7 @@ impl Ui {
     /// `rows` × `cols`. Colors spring to new values; hovering lifts a cell
     /// and shows its value. Returns the `(row, column)` clicked.
     pub fn heatmap(&mut self, key: &str, rows: &[&str], cols: &[&str], values: &[f32]) -> Option<(usize, usize)> {
+        let dec = self.locale.decimal;
         let id = self.declare(key);
         let font = self.theme.font * 0.78;
         let lh = font * LINE_HEIGHT;
@@ -416,7 +425,7 @@ impl Ui {
                     self.draw.rect(rect, 4.0, fill.fade(a));
                 }
                 if hit.hovered {
-                    short_number(v, &mut label);
+                    short_number(v, dec, &mut label);
                     tip = Some((Vec2::new(rect.center().x, rect.y), vec![(fill, format!("{row} · {}: {label}", cols[c]))]));
                 }
             }
@@ -495,13 +504,15 @@ mod tests {
         assert_eq!(nice_axis(-5.0, 5.0), (-6.0, 6.0, 2.0));
         assert_eq!(nice_axis(0.0, 0.0), (0.0, 1.0, 1.0));
         let mut s = String::new();
-        short_number(12.5, &mut s);
+        short_number(12.5, ',', &mut s);
         assert_eq!(s, "12,5");
-        short_number(1250.0, &mut s);
+        short_number(1250.0, ',', &mut s);
         assert_eq!(s, "1,2k");
-        short_number(25_000.0, &mut s);
+        short_number(1250.0, '.', &mut s);
+        assert_eq!(s, "1.2k");
+        short_number(25_000.0, ',', &mut s);
         assert_eq!(s, "25k");
-        short_number(40.0, &mut s);
+        short_number(40.0, ',', &mut s);
         assert_eq!(s, "40");
     }
 }

@@ -157,6 +157,10 @@ impl Ui {
         }
 
         let mut clicked = None;
+        if self.a11y_on {
+            self.describe(id, crate::a11y::Role::Table, key, r, None, None);
+            self.a11y_parents.push(id);
+        }
         for (pos, &i) in order.iter().enumerate() {
             let rid = id.child("row").with(i as u64);
             let target = Rect::new(r.x, r.y + row_h * (pos + 1) as f32, r.w, row_h);
@@ -182,6 +186,9 @@ impl Ui {
             if fill.a > 0.002 {
                 self.draw.set(slot, DrawCmd::Rect { rect: rr.inset(1.0), radius: 6.0, fill, stroke: Color::TRANSPARENT, stroke_width: 0.0 });
             }
+        }
+        if self.a11y_on {
+            self.a11y_parents.pop();
         }
         clicked
     }

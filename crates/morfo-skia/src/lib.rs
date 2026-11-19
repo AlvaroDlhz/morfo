@@ -7,85 +7,18 @@
 //! it is large, and glyph bitmaps and text metrics are cached between
 //! frames.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 
-use ab_glyph::{point, Font, FontArc, GlyphId, PxScale, ScaleFont};
 use morfo::ui::LINE_HEIGHT;
-use morfo::{Color, DrawCmd, DrawList, Rect, TextMeasure, Vec2};
+use morfo::{Color, DrawCmd, DrawList, Rect, TextStyle, Vec2};
+use morfo_fonts::ab_glyph::{point, Font};
+use morfo_fonts::{Face, FontSet};
 use tiny_skia::{Pixmap, PixmapMut};
 
-pub use ab_glyph::InvalidFont;
+pub use morfo_fonts::{FontMeasure, InvalidFont};
 pub use tiny_skia;
-
-fn px_scale(font: &FontArc, size: f32) -> PxScale {
-    // ab_glyph scales by ascent-to-descent height; `size` is the em size.
-    PxScale::from(size * font.height_unscaled() / font.units_per_em().unwrap_or(1000.0))
-}
-
-/// Text metrics matching what [`Renderer`] draws. Give it to
-/// [`morfo::Ui::set_text_measure`].
-///
-/// It remembers the glyph and advance of every character it has seen and
-/// the kerning of every pair, so measuring a string is a few table lookups
-/// per character instead of a walk through the font's tables.
-pub struct FontMeasure {
-    font: FontArc,
-    /// Glyph and unscaled advance of each character.
-    glyphs: RefCell<HashMap<char, (GlyphId, f32), Mixed>>,
-    /// Unscaled kerning of each pair of glyphs (`first << 16 | second`).
-    kerns: RefCell<HashMap<u32, f32, Mixed>>,
-}
-
-/// Hasher for small integer keys: one multiplication.
-#[derive(Default, Clone, Copy)]
-struct Mix(u64);
-type Mixed = BuildHasherDefault<Mix>;
-
-impl Hasher for Mix {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u32(b as u32);
-        }
-    }
-    fn write_u32(&mut self, v: u32) {
-        self.0 = (self.0 ^ v as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    }
-}
-
-impl FontMeasure {
-    fn new(font: FontArc) -> FontMeasure {
-        FontMeasure { font, glyphs: RefCell::default(), kerns: RefCell::default() }
-    }
-}
-
-impl TextMeasure for FontMeasure {
-    fn width(&self, text: &str, size: f32) -> f32 {
-        // Scaled metrics are the unscaled ones times this factor, which is
-        // exactly what the renderer's own layout computes.
-        let h = self.font.as_scaled(px_scale(&self.font, size)).h_scale_factor();
-        let (mut glyphs, mut kerns) = (self.glyphs.borrow_mut(), self.kerns.borrow_mut());
-        let mut w = 0.0;
-        let mut prev: Option<GlyphId> = None;
-        for ch in text.chars() {
-            let (g, advance) = *glyphs.entry(ch).or_insert_with(|| {
-                let g = self.font.glyph_id(ch);
-                (g, self.font.h_advance_unscaled(g))
-            });
-            if let Some(p) = prev {
-                w += h * *kerns.entry((p.0 as u32) << 16 | g.0 as u32).or_insert_with(|| self.font.kern_unscaled(p, g));
-            }
-            w += h * advance;
-            prev = Some(g);
-        }
-        w
-    }
-}
 
 struct Glyph {
     w: i32,
@@ -95,8 +28,13 @@ struct Glyph {
     coverage: Vec<u8>,
 }
 
-/// (glyph, size in 1/8 px, horizontal subpixel in 1/4 px, monospaced)
-type GlyphKey = (u16, u32, u8, bool);
+/// (glyph, size in 1/8 px, horizontal subpixel in 1/4 px, face)
+type GlyphKey = (u16, u32, u8, Face);
+
+/// How far apart, in device pixels, the two passes of faked bold text are.
+fn bold_offset(size: f32) -> f32 {
+    (size * 0.045).clamp(0.5, 2.0)
+}
 
 /// What the previous frame was painted with; if any of it changes,
 /// everything is repainted.
@@ -106,8 +44,7 @@ type Target = (u32, u32, u32, [u8; 4]);
 const MAX_CLIPS: usize = 16;
 
 pub struct Renderer {
-    font: FontArc,
-    mono: Option<FontArc>,
+    fonts: Arc<FontSet>,
     glyphs: HashMap<GlyphKey, Option<Glyph>>,
     /// Last frame's commands and text, to repaint only what changed.
     prev: Vec<DrawCmd>,
@@ -120,24 +57,54 @@ pub struct Renderer {
 impl Renderer {
     /// `font` is the bytes of a TrueType/OpenType font.
     pub fn new(font: Vec<u8>) -> Result<Renderer, InvalidFont> {
-        Ok(Renderer {
-            font: FontArc::try_from_vec(font)?,
-            mono: None,
+        Ok(Renderer::with_fonts(FontSet::new(font)?))
+    }
+
+    /// A renderer drawing with every face of `fonts`.
+    pub fn with_fonts(fonts: FontSet) -> Renderer {
+        Renderer {
+            fonts: Arc::new(fonts),
             glyphs: HashMap::new(),
             prev: Vec::new(),
             prev_text: String::new(),
             prev_points: Vec::new(),
             prev_target: None,
             threads: std::thread::available_parallelism().map_or(1, |n| n.get()).min(8),
-        })
+        }
+    }
+
+    /// Changes the fonts (adds a face, a fallback): `f` gets them.
+    fn fonts_mut(&mut self, f: impl FnOnce(&mut FontSet) -> Result<(), InvalidFont>) -> Result<(), InvalidFont> {
+        f(Arc::make_mut(&mut self.fonts))?;
+        self.glyphs.clear();
+        self.invalidate();
+        Ok(())
     }
 
     /// Font used for code. Without one, code is drawn in the main font.
     pub fn set_mono_font(&mut self, font: Vec<u8>) -> Result<(), InvalidFont> {
-        self.mono = Some(FontArc::try_from_vec(font)?);
-        self.glyphs.clear();
-        self.invalidate();
-        Ok(())
+        self.fonts_mut(|f| f.set_mono(font))
+    }
+
+    /// Font for bold text. Without one, bold is drawn twice, a hair apart.
+    pub fn set_bold_font(&mut self, font: Vec<u8>) -> Result<(), InvalidFont> {
+        self.fonts_mut(|f| f.set_bold(font))
+    }
+
+    /// Font for italic text. Without one, italic stays upright.
+    pub fn set_italic_font(&mut self, font: Vec<u8>) -> Result<(), InvalidFont> {
+        self.fonts_mut(|f| f.set_italic(font))
+    }
+
+    /// A font for the characters the others lack (symbols, other scripts),
+    /// tried after those added before it.
+    pub fn add_fallback_font(&mut self, font: Vec<u8>) -> Result<(), InvalidFont> {
+        self.fonts_mut(|f| f.add_fallback(font))
+    }
+
+    /// The fonts this renderer draws with.
+    pub fn fonts(&self) -> &Arc<FontSet> {
+        &self.fonts
     }
 
     /// Maximum number of threads used to paint a frame (1 = no threads).
@@ -151,8 +118,9 @@ impl Renderer {
         self.prev_target = None;
     }
 
+    /// Text metrics that match what this renderer draws.
     pub fn measure(&self) -> FontMeasure {
-        FontMeasure::new(self.font.clone())
+        FontMeasure::new(self.fonts.clone())
     }
 
     /// Paints `list` over `background`. `scale` is the device pixel ratio.
@@ -227,13 +195,13 @@ impl Renderer {
         let (old, new) = (&self.prev[..], list.commands());
         let same = |a: &DrawCmd, b: &DrawCmd| match (*a, *b) {
             (
-                DrawCmd::Text { pos, size, color, start, len, mono },
-                DrawCmd::Text { pos: pos2, size: size2, color: color2, start: start2, len: len2, mono: mono2 },
+                DrawCmd::Text { pos, size, color, start, len, style },
+                DrawCmd::Text { pos: pos2, size: size2, color: color2, start: start2, len: len2, style: style2 },
             ) => {
                 pos == pos2
                     && size == size2
                     && color == color2
-                    && mono == mono2
+                    && style == style2
                     && self.prev_text[start as usize..(start + len) as usize] == *list.text(start2, len2)
             }
             (DrawCmd::Polygon { start, len, color }, DrawCmd::Polygon { start: start2, len: len2, color: color2 }) => {
@@ -277,53 +245,56 @@ impl Renderer {
                 (x0 - 1.0, x1 + 1.0)
             }
             DrawCmd::Rect { rect, stroke_width, .. } => (rect.x - stroke_width - 1.0, rect.right() + stroke_width + 1.0),
+            DrawCmd::Image { rect, .. } | DrawCmd::Gradient { rect, .. } => (rect.x - 1.0, rect.right() + 1.0),
             DrawCmd::Shadow { rect, blur, offset, .. } => (rect.x + offset.x - blur - 1.0, rect.right() + offset.x + blur + 1.0),
-            DrawCmd::Text { pos, size, start, len, mono, .. } => {
-                let font = if mono { self.mono.as_ref().unwrap_or(&self.font) } else { &self.font };
-                let px = px_scale(font, size);
-                let mut end = pos.x;
-                walk(font, px, &text[start as usize..(start + len) as usize], pos.x, |id, pen| end = pen + font.as_scaled(px).h_advance(id));
+            DrawCmd::Text { pos, size, start, len, style, .. } => {
+                let end = pos.x + self.fonts.width(&text[start as usize..(start + len) as usize], size, style);
                 // Glyphs may reach a little past their advance on both sides.
                 (pos.x - size, end + size)
             }
             DrawCmd::Line { from, to, width, .. } => (from.x.min(to.x) - width - 1.0, from.x.max(to.x) + width + 1.0),
             // A clip that changes exposes or hides whatever is inside it.
             DrawCmd::PushClip { rect, .. } => (rect.x - 1.0, rect.right() + 1.0),
-            DrawCmd::Nop | DrawCmd::PopClip => return None,
+            _ => return None,
         })
     }
 
     /// Rasterizes the glyphs the rows `first..end` will need, so painting
     /// can then share the cache between threads without locking.
     fn prepare_glyphs(&mut self, list: &DrawList, scale: f32, first: u32, end: u32) {
+        let fonts = self.fonts.clone();
         for cmd in list.commands() {
-            let DrawCmd::Text { pos, size, start, len, mono, .. } = *cmd else { continue };
+            let DrawCmd::Text { pos, size, start, len, style, .. } = *cmd else { continue };
             if !touches(cmd, list.point_arena(), scale, first, end) {
                 continue;
             }
-            let mono = mono && self.mono.is_some();
-            let font = if mono { self.mono.clone().unwrap() } else { self.font.clone() };
-            let px = px_scale(&font, size * scale);
-            let size_key = (size * scale * 8.0).round() as u32;
+            let device = size * scale;
+            let size_key = (device * 8.0).round() as u32;
+            let (_, fake_bold) = fonts.pick(style);
+            let passes: &[f32] = if fake_bold { &[0.0, 1.0] } else { &[0.0] };
             let glyphs = &mut self.glyphs;
-            walk(&font, px, list.text(start, len), pos.x * scale, |id, pen| {
-                let sub = ((pen - pen.floor()) * 4.0) as u8;
-                glyphs.entry((id.0, size_key, sub, mono)).or_insert_with(|| {
-                    // Rasterize at the size the key stands for, not at the
-                    // exact size of whoever asks first: the same key always
-                    // yields the same bitmap.
-                    let px = px_scale(&font, size_key as f32 / 8.0);
-                    let outlined = font.outline_glyph(id.with_scale_and_position(px, point(sub as f32 * 0.25, 0.0)))?;
-                    let bounds = outlined.px_bounds();
-                    let (w, h) = (bounds.width() as i32, bounds.height() as i32);
-                    let mut coverage = vec![0u8; (w * h).max(0) as usize];
-                    outlined.draw(|gx, gy, c| {
-                        if let Some(px) = coverage.get_mut((gy as i32 * w + gx as i32) as usize) {
-                            *px = (c.clamp(0.0, 1.0) * 255.0) as u8;
-                        }
+            fonts.walk(list.text(start, len), device, style, pos.x * scale, |face, id, pen| {
+                for &k in passes {
+                    let pen = pen + k * bold_offset(device);
+                    let sub = ((pen - pen.floor()) * 4.0) as u8;
+                    glyphs.entry((id.0, size_key, sub, face)).or_insert_with(|| {
+                        // Rasterize at the size the key stands for, not at the
+                        // exact size of whoever asks first: the same key always
+                        // yields the same bitmap.
+                        let font = fonts.face(face);
+                        let px = fonts.px_scale(face, size_key as f32 / 8.0);
+                        let outlined = font.outline_glyph(id.with_scale_and_position(px, point(sub as f32 * 0.25, 0.0)))?;
+                        let bounds = outlined.px_bounds();
+                        let (w, h) = (bounds.width() as i32, bounds.height() as i32);
+                        let mut coverage = vec![0u8; (w * h).max(0) as usize];
+                        outlined.draw(|gx, gy, c| {
+                            if let Some(px) = coverage.get_mut((gy as i32 * w + gx as i32) as usize) {
+                                *px = (c.clamp(0.0, 1.0) * 255.0) as u8;
+                            }
+                        });
+                        Some(Glyph { w, h, left: bounds.min.x as i32, top: bounds.min.y as i32, coverage })
                     });
-                    Some(Glyph { w, h, left: bounds.min.x as i32, top: bounds.min.y as i32, coverage })
-                });
+                }
             });
         }
     }
@@ -384,8 +355,8 @@ impl Renderer {
             if y1 <= y0 || !touches(cmd, list.point_arena(), scale, y0, y1) {
                 continue;
             }
-            if let DrawCmd::Text { pos, size, color, start, len, mono } = *cmd {
-                self.blit_text(rows, width, first, (y0, y1), list.text(start, len), pos.x * scale, pos.y * scale, size * scale, color, cols, mono);
+            if let DrawCmd::Text { pos, size, color, start, len, style } = *cmd {
+                self.blit_text(rows, width, first, (y0, y1), list.text(start, len), pos.x * scale, pos.y * scale, size * scale, color, cols, style);
                 continue;
             }
             let band = &mut rows[(y0 - first) as usize * stride..(y1 - first) as usize * stride];
@@ -421,6 +392,10 @@ impl Renderer {
                         t * t
                     });
                 }
+                DrawCmd::Gradient { rect, radius, from, to, start, end } => {
+                    let shape = Shape::new(rect, radius, scale);
+                    paint_gradient(band, width, cols, y0, y1, &shape, (from * scale, to * scale), start, end);
+                }
                 DrawCmd::Polygon { start, len, color } => {
                     fill_polygon(band, width, cols, y0, y1, list.points(start, len), scale, color);
                 }
@@ -428,6 +403,11 @@ impl Renderer {
                     // A stroke with round ends is a capsule; filling it with the
                     // row-by-row rasterizer keeps partial repaints exact.
                     fill_polygon(band, width, cols, y0, y1, &capsule(from, to, stroke_width * 0.5), scale, color);
+                }
+                DrawCmd::Image { rect, radius, image, uv, tint, .. } => {
+                    if let Some(data) = list.image(image) {
+                        paint_image(band, width, cols, y0, y1, Shape::new(rect, radius, scale), rect, uv, data, tint, scale);
+                    }
                 }
                 _ => {}
             }
@@ -449,13 +429,11 @@ impl Renderer {
         size: f32,
         color: Color,
         cols: (i32, i32),
-        mono: bool,
+        style: TextStyle,
     ) {
-        let mono = mono && self.mono.is_some();
-        let font = if mono { self.mono.as_ref().unwrap() } else { &self.font };
-        let px = px_scale(font, size);
-        let f = font.as_scaled(px);
-        let baseline = (y + (size * LINE_HEIGHT - (f.ascent() - f.descent())) * 0.5 + f.ascent()).round() as i32;
+        let baseline = self.fonts.baseline(style, y, size, LINE_HEIGHT);
+        let (_, fake_bold) = self.fonts.pick(style);
+        let passes: &[f32] = if fake_bold { &[0.0, 1.0] } else { &[0.0] };
 
         let pw = width as i32;
         let (x0, x1) = cols;
@@ -467,46 +445,33 @@ impl Renderer {
         let alpha = (color.a.clamp(0.0, 1.0) * 256.0) as u32;
         let size_key = (size * 8.0).round() as u32;
         let first = first as i32;
-        walk(font, px, text, x, |id, pen| {
-            let sub = ((pen - pen.floor()) * 4.0) as u8;
-            let Some(Some(gl)) = self.glyphs.get(&(id.0, size_key, sub, mono)) else { return };
-            let gx0 = pen.floor() as i32 + gl.left;
-            let gy0 = baseline + gl.top;
-            for row in (y0 - gy0).max(0)..(y1 - gy0).min(gl.h) {
-                let dst_row = ((gy0 + row - first) * pw) as usize;
-                let src_row = (row * gl.w) as usize;
-                for col in (x0 - gx0).max(0)..(x1 - gx0).min(gl.w) {
-                    let c = gl.coverage[src_row + col as usize] as u32;
-                    if c == 0 {
-                        continue;
+        self.fonts.walk(text, size, style, x, |face, id, pen| {
+            for &k in passes {
+                let pen = pen + k * bold_offset(size);
+                let sub = ((pen - pen.floor()) * 4.0) as u8;
+                let Some(Some(gl)) = self.glyphs.get(&(id.0, size_key, sub, face)) else { continue };
+                let gx0 = pen.floor() as i32 + gl.left;
+                let gy0 = baseline + gl.top;
+                for row in (y0 - gy0).max(0)..(y1 - gy0).min(gl.h) {
+                    let dst_row = ((gy0 + row - first) * pw) as usize;
+                    let src_row = (row * gl.w) as usize;
+                    for col in (x0 - gx0).max(0)..(x1 - gx0).min(gl.w) {
+                        let c = gl.coverage[src_row + col as usize] as u32;
+                        if c == 0 {
+                            continue;
+                        }
+                        let a = (c * alpha) >> 8; // 0..=255
+                        let inv = 255 - a;
+                        let i = (dst_row + (gx0 + col) as usize) * 4;
+                        let d = &mut rows[i..i + 4];
+                        d[0] = ((r as u32 * a + d[0] as u32 * inv) / 255) as u8;
+                        d[1] = ((g as u32 * a + d[1] as u32 * inv) / 255) as u8;
+                        d[2] = ((b as u32 * a + d[2] as u32 * inv) / 255) as u8;
+                        d[3] = ((255 * a + d[3] as u32 * inv) / 255) as u8;
                     }
-                    let a = (c * alpha) >> 8; // 0..=255
-                    let inv = 255 - a;
-                    let i = (dst_row + (gx0 + col) as usize) * 4;
-                    let d = &mut rows[i..i + 4];
-                    d[0] = ((r as u32 * a + d[0] as u32 * inv) / 255) as u8;
-                    d[1] = ((g as u32 * a + d[1] as u32 * inv) / 255) as u8;
-                    d[2] = ((b as u32 * a + d[2] as u32 * inv) / 255) as u8;
-                    d[3] = ((255 * a + d[3] as u32 * inv) / 255) as u8;
                 }
             }
         });
-    }
-}
-
-/// Calls `f(glyph, pen_x)` for each character of a line starting at `x`.
-fn walk(font: &FontArc, px: PxScale, text: &str, x: f32, mut f: impl FnMut(GlyphId, f32)) {
-    let scaled = font.as_scaled(px);
-    let mut pen = x;
-    let mut prev: Option<GlyphId> = None;
-    for ch in text.chars() {
-        let id = scaled.glyph_id(ch);
-        if let Some(p) = prev {
-            pen += scaled.kern(p, id);
-        }
-        prev = Some(id);
-        f(id, pen);
-        pen += scaled.h_advance(id);
     }
 }
 
@@ -519,12 +484,13 @@ fn extent(cmd: &DrawCmd, points: &[Vec2]) -> Option<(f32, f32)> {
             (y0 - 1.0, y1 + 1.0)
         }
         DrawCmd::Rect { rect, stroke_width, .. } => (rect.y - stroke_width - 1.0, rect.bottom() + stroke_width + 1.0),
+        DrawCmd::Image { rect, .. } | DrawCmd::Gradient { rect, .. } => (rect.y - 1.0, rect.bottom() + 1.0),
         DrawCmd::Shadow { rect, blur, offset, .. } => (rect.y + offset.y - blur - 1.0, rect.bottom() + offset.y + blur + 1.0),
         DrawCmd::Text { pos, size, .. } => (pos.y - size * 0.4, pos.y + size * 1.8),
         DrawCmd::Line { from, to, width, .. } => (from.y.min(to.y) - width - 1.0, from.y.max(to.y) + width + 1.0),
         // A clip that changes exposes or hides whatever is inside it.
         DrawCmd::PushClip { rect, .. } => (rect.y - 1.0, rect.bottom() + 1.0),
-        DrawCmd::Nop | DrawCmd::PopClip => return None,
+        _ => return None,
     })
 }
 
@@ -653,6 +619,35 @@ fn paint(
     }
 }
 
+/// Fills `shape` with a linear gradient from `start` at `ends.0` to `end` at
+/// `ends.1` (device pixels), into the rows `y0..y1` held by `band`.
+#[allow(clippy::too_many_arguments)]
+fn paint_gradient(band: &mut [u8], width: u32, cols: (i32, i32), y0: u32, y1: u32, shape: &Shape, ends: (Vec2, Vec2), start: Color, end: Color) {
+    let (x_lo, y_lo, x_hi, y_hi) = shape.bounds(1.0);
+    let x_start = (x_lo.floor() as i32).clamp(cols.0, cols.1);
+    let x_end = (x_hi.ceil() as i32).clamp(cols.0, cols.1);
+    let row_start = (y_lo.floor().max(0.0) as u32).max(y0);
+    let row_end = (y_hi.ceil().max(0.0) as u32).min(y1);
+    let d = ends.1 - ends.0;
+    let inv = 1.0 / (d.x * d.x + d.y * d.y).max(1e-6);
+    let stride = width as usize * 4;
+    for row in row_start..row_end {
+        let y = row as f32 + 0.5;
+        let line = &mut band[(row - y0) as usize * stride..][..stride];
+        for x in x_start.max(0)..x_end {
+            let xf = x as f32 + 0.5;
+            let cover = edge(shape.distance(xf, y));
+            if cover <= 0.0 {
+                continue;
+            }
+            let t = (((xf - ends.0.x) * d.x + (y - ends.0.y) * d.y) * inv).clamp(0.0, 1.0);
+            let c = start.mix(end, t);
+            let [r, g, b, _] = c.to_rgba8();
+            blend(&mut line[x as usize * 4..][..4], r, g, b, (c.a.clamp(0.0, 1.0) * 255.0 * cover + 0.5) as u32);
+        }
+    }
+}
+
 /// Fills a polygon (non-zero winding) into the rows `y0..y1` held by `band`.
 ///
 /// Each row is computed on its own, from four sub-scanlines with exact
@@ -745,6 +740,79 @@ fn add_span(cover: &mut [f32], origin: usize, x0: f32, x1: f32, weight: f32) {
     }
 }
 
+/// Paints the part `uv` of image `data` into `rect` (logical pixels), with
+/// the rounded corners of `shape` (device pixels), multiplied by `tint`,
+/// limited to rows `y0..y1` and columns `cols`. Bilinear sampling, done on
+/// premultiplied colors so transparent edges do not darken; each pixel
+/// depends on nothing but its own position, so partial repaints match.
+#[allow(clippy::too_many_arguments)]
+fn paint_image(
+    band: &mut [u8],
+    width: u32,
+    cols: (i32, i32),
+    y0: u32,
+    y1: u32,
+    shape: Shape,
+    rect: Rect,
+    uv: Rect,
+    data: &morfo::ImageData,
+    tint: Color,
+    scale: f32,
+) {
+    let (x0, top, x1, bottom) = shape.bounds(1.0);
+    let x_start = (x0.floor() as i32).clamp(cols.0, cols.1);
+    let x_end = (x1.ceil() as i32).clamp(cols.0, cols.1);
+    let row_start = (top.floor().max(0.0) as u32).max(y0);
+    let row_end = (bottom.ceil().max(0.0) as u32).min(y1);
+    if x_start >= x_end || row_start >= row_end || rect.w <= 0.0 || rect.h <= 0.0 {
+        return;
+    }
+    let (iw, ih) = (data.width as f32, data.height as f32);
+    // Image pixels per device pixel, both ways.
+    let (du, dv) = (uv.w * iw / (rect.w * scale), uv.h * ih / (rect.h * scale));
+    let (u0, v0) = (uv.x * iw - rect.x * scale * du, uv.y * ih - rect.y * scale * dv);
+    let t = [tint.r.clamp(0.0, 1.0), tint.g.clamp(0.0, 1.0), tint.b.clamp(0.0, 1.0), tint.a.clamp(0.0, 1.0)];
+    let stride = width as usize * 4;
+    for row in row_start..row_end {
+        let y = row as f32 + 0.5;
+        let sy = v0 + y * dv - 0.5;
+        let (fy, ty) = (sy.floor(), sy - sy.floor());
+        let line = &mut band[(row - y0) as usize * stride..][..stride];
+        for x in x_start..x_end {
+            let px = x as f32 + 0.5;
+            let cover = edge(shape.distance(px, y));
+            if cover <= 0.0 {
+                continue;
+            }
+            let sx = u0 + px * du - 0.5;
+            let (fx, tx) = (sx.floor(), sx - sx.floor());
+            // Premultiplied bilinear blend of the four texels around.
+            let mut acc = [0.0f32; 4];
+            for (dx, dy, w) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+                let p = data.pixel(fx as i32 + dx, fy as i32 + dy);
+                let a = p[3] as f32 * w;
+                acc[0] += p[0] as f32 * a;
+                acc[1] += p[1] as f32 * a;
+                acc[2] += p[2] as f32 * a;
+                acc[3] += a;
+            }
+            let alpha = acc[3] / 255.0 * t[3] * cover;
+            if alpha <= 0.0 {
+                continue;
+            }
+            // Premultiplied source over the premultiplied pixel.
+            let k = t[3] * cover / 255.0;
+            let src = [acc[0] * t[0] * k, acc[1] * t[1] * k, acc[2] * t[2] * k];
+            let inv = 1.0 - alpha.min(1.0);
+            let d = &mut line[x as usize * 4..][..4];
+            d[0] = (src[0] + d[0] as f32 * inv + 0.5).min(255.0) as u8;
+            d[1] = (src[1] + d[1] as f32 * inv + 0.5).min(255.0) as u8;
+            d[2] = (src[2] + d[2] as f32 * inv + 0.5).min(255.0) as u8;
+            d[3] = (alpha.min(1.0) * 255.0 + d[3] as f32 * inv + 0.5).min(255.0) as u8;
+        }
+    }
+}
+
 /// Source-over of a straight-alpha color onto a premultiplied pixel.
 #[inline(always)]
 fn blend(px: &mut [u8], r: u8, g: u8, b: u8, a: u32) {
@@ -759,29 +827,94 @@ fn blend(px: &mut [u8], r: u8, g: u8, b: u8, a: u32) {
 }
 
 #[cfg(test)]
-mod measure_tests {
+mod image_tests {
     use super::*;
+    use morfo::{Fit, Theme, Ui};
 
-    /// The cached metrics must be, bit for bit, what the renderer lays text
-    /// out with. Skips itself where no system font is found.
+    /// A 2×2 image (red, green / blue, white) stretched over a square: each
+    /// quarter shows its color, and repainting only part of the frame gives
+    /// the same pixels as painting all of it.
     #[test]
-    fn cached_widths_are_the_renderers_own() {
+    fn images_are_painted_and_partial_repaints_match() {
         let paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         ];
-        let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) else { return };
-        let font = FontArc::try_from_vec(bytes).unwrap();
-        let measure = FontMeasure::new(font.clone());
-        for size in [11.0f32, 14.25, 15.0, 25.5] {
-            for text in ["", "A", "AVATAR To. Wa", "¿Qué tal, señor? «Año» — 12.480 €", "fi fl ff WAVE Yo.", "mmmmmmmm iiiiiiii"] {
-                let mut end = 0.0;
-                walk(&font, px_scale(&font, size), text, 0.0, |id, pen| end = pen + font.as_scaled(px_scale(&font, size)).h_advance(id));
-                // Twice: filling the cache and reading it back.
-                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}");
-                assert_eq!(measure.width(text, size).to_bits(), end.to_bits(), "{text:?} at {size}, cached");
-            }
+        let Some(font) = paths.iter().find_map(|p| std::fs::read(p).ok()) else { return };
+        let mut ui = Ui::new(Theme::dark());
+        let px = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
+        let id = ui.add_image(2, 2, px).unwrap();
+        let mut t = 0.0;
+        let mut frame = |ui: &mut Ui, x: f32| {
+            t += 1.0;
+            ui.set_instant(true);
+            ui.begin(t, Vec2::new(200.0, 200.0));
+            ui.space(x);
+            ui.image("i", id, Vec2::new(80.0, 80.0), Fit::Fill, "");
+            ui.end();
+        };
+        for _ in 0..3 {
+            frame(&mut ui, 0.0);
         }
+        let mut renderer = Renderer::new(font.clone()).unwrap();
+        let mut pixmap = Pixmap::new(200, 200).unwrap();
+        renderer.render(ui.draw_list(), &mut pixmap, 1.0, Color::BLACK);
+        let r = ui.draw_list().commands().iter().find_map(|c| if let DrawCmd::Image { rect, .. } = *c { Some(rect) } else { None }).unwrap();
+        let at = |p: &Pixmap, x: f32, y: f32| {
+            let i = ((y as usize) * 200 + x as usize) * 4;
+            [p.data()[i], p.data()[i + 1], p.data()[i + 2]]
+        };
+        let q = |fx: f32, fy: f32| (r.x + r.w * fx, r.y + r.h * fy);
+        let (x, y) = q(0.12, 0.12);
+        assert_eq!(at(&pixmap, x, y), [255, 0, 0], "top left is red");
+        let (x, y) = q(0.88, 0.12);
+        assert_eq!(at(&pixmap, x, y), [0, 255, 0], "top right is green");
+        let (x, y) = q(0.12, 0.88);
+        assert_eq!(at(&pixmap, x, y), [0, 0, 255], "bottom left is blue");
+        let (x, y) = q(0.5, 0.5);
+        let mid = at(&pixmap, x, y);
+        assert!(mid.iter().all(|&c| c > 60 && c < 200), "the middle blends the four: {mid:?}");
+        // Moved down: the partial repaint must equal a full one.
+        frame(&mut ui, 40.0);
+        frame(&mut ui, 40.0);
+        renderer.render(ui.draw_list(), &mut pixmap, 1.0, Color::BLACK);
+        let mut full = Pixmap::new(200, 200).unwrap();
+        Renderer::new(font).unwrap().render(ui.draw_list(), &mut full, 1.0, Color::BLACK);
+        assert!(pixmap.data() == full.data(), "partial repaint differs from a full one");
+    }
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+    use morfo::{DrawList, TextStyle};
+
+    /// Ink (summed coverage) of `text` drawn in `style`.
+    fn ink(renderer: &mut Renderer, style: TextStyle, text: &str) -> u64 {
+        let mut list = DrawList::default();
+        list.add_text_styled(Vec2::new(4.0, 4.0), 20.0, Color::WHITE, text, style);
+        let mut pixmap = Pixmap::new(320, 40).unwrap();
+        renderer.invalidate();
+        renderer.render(&list, &mut pixmap, 1.0, Color::BLACK);
+        pixmap.data().as_chunks::<4>().0.iter().map(|p| p[0] as u64).sum()
+    }
+
+    /// Bold text has more ink than regular, with or without a bold face;
+    /// a character the main face lacks is drawn from a fallback.
+    #[test]
+    fn bold_is_heavier_and_fallbacks_fill_gaps() {
+        let read = |paths: &[&str]| paths.iter().find_map(|p| std::fs::read(p).ok());
+        let Some(regular) = read(&["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]) else { return };
+        let mut renderer = Renderer::new(regular).unwrap();
+        let plain = ink(&mut renderer, TextStyle::REGULAR, "Heavy words");
+        let faked = ink(&mut renderer, TextStyle::BOLD, "Heavy words");
+        assert!(faked > plain + plain / 10, "fake bold {faked} vs {plain}");
+        // Liberation has no box-drawing heavy check mark; DejaVu does.
+        let gap = ink(&mut renderer, TextStyle::REGULAR, "\u{2714}");
+        let Some(dejavu) = read(&["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf"]) else { return };
+        renderer.add_fallback_font(dejavu).unwrap();
+        let filled = ink(&mut renderer, TextStyle::REGULAR, "\u{2714}");
+        assert!(filled > gap, "the fallback draws it: {filled} vs {gap}");
     }
 }

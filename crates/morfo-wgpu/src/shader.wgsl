@@ -12,6 +12,9 @@ struct Globals {
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var<storage, read> points: array<vec2<f32>>;
+// The image of the instances that show one (a 1×1 placeholder otherwise).
+@group(1) @binding(0) var img: texture_2d<f32>;
+@group(1) @binding(1) var img_samp: sampler;
 
 struct Inst {
     @location(0) quad: vec4<f32>,   // area drawn: x, y, w, h
@@ -19,7 +22,7 @@ struct Inst {
     @location(2) fill: vec4<f32>,
     @location(3) stroke: vec4<f32>,
     @location(4) params: vec4<f32>, // rect: radius, stroke width | shadow: radius, blur | line: half width
-    @location(5) uv: vec4<f32>,     // glyph: atlas u0, v0, u1, v1
+    @location(5) uv: vec4<f32>,     // glyph: atlas u0, v0, u1, v1 | image: u0, v0, u1, v1
     @location(6) kind: u32,
 }
 
@@ -50,6 +53,12 @@ fn vs(@builtin(vertex_index) vi: u32, i: Inst) -> Frag {
     o.stroke = i.stroke;
     o.params = i.params;
     o.t = mix(i.uv.xy, i.uv.zw, c);
+    if i.kind == 6u {
+        // Gradient: how far along it each corner is; linear, so the
+        // interpolation in between is exact.
+        let d = i.uv.zw - i.uv.xy;
+        o.t = vec2<f32>(dot(p - i.uv.xy, d) / max(dot(d, d), 1e-6), 0.0);
+    }
     o.kind = i.kind;
     return o;
 }
@@ -112,6 +121,16 @@ fn fs(o: Frag) -> @location(0) vec4<f32> {
             let a = o.fill.a * textureSampleLevel(atlas, samp, o.t, 0.0).r;
             out = vec4<f32>(o.fill.rgb * a, a);
         }
+        case 5u: { // image with rounded corners, tinted by `fill`
+            let c = textureSampleLevel(img, img_samp, o.t, 0.0);
+            let k = o.fill.a * edge(sd_rrect(o.p, o.shape, o.params.x));
+            out = vec4<f32>(c.rgb * o.fill.rgb, 1.0) * c.a * k;
+        }
+        case 6u: { // rounded rectangle filled with a linear gradient
+            let c = mix(o.fill, o.stroke, clamp(o.t.x, 0.0, 1.0));
+            let a = c.a * edge(sd_rrect(o.p, o.shape, o.params.x));
+            out = vec4<f32>(c.rgb * a, a);
+        }
         default: { // filled polygon, non-zero winding
             let start = u32(o.shape.x);
             let n = u32(o.shape.y);
@@ -120,7 +139,15 @@ fn fs(o: Frag) -> @location(0) vec4<f32> {
             for (var k = 0u; k < n; k = k + 1u) {
                 let a = points[start + k];
                 let b = points[start + (k + 1u) % n];
-                dmin = min(dmin, sd_segment(o.p, a, b));
+                // A seam joining two contours of one shape is drawn as a
+                // repeated point, the seam, and a repeated point: it is no
+                // edge, and must not soften what is around it.
+                let before = points[start + (k + n - 1u) % n];
+                let after = points[start + (k + 2u) % n];
+                let seam = all(before == a) && all(after == b) && any(a != b);
+                if !seam {
+                    dmin = min(dmin, sd_segment(o.p, a, b));
+                }
                 let side = cross2(b - a, o.p - a);
                 if a.y <= o.p.y {
                     if b.y > o.p.y && side > 0.0 {

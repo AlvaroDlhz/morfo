@@ -1,0 +1,15 @@
+[package]
+name = "morfo-fonts"
+description = "The fonts of morfo-ui's renderers: faces for regular, bold, italic and monospaced text, per-character fallback fonts, and cached text metrics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["gui", "ui", "font", "text"]
+categories = ["gui", "text-processing"]
+
+[dependencies]
+morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
+ab_glyph = "0.2"

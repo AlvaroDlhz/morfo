@@ -139,7 +139,7 @@ impl Ui {
         let state = id.child("state");
         let (up, down) = (self.keys.iter().filter(|k| **k == Key::Up).count(), self.keys.iter().filter(|k| **k == Key::Down).count());
         let edit = self.text_field(key, query, placeholder, width);
-        let anchor = self.rect_of(id).unwrap_or_default();
+        let anchor = self.layout_rect(id).unwrap_or_default();
         // Once an option is chosen its full text is in the field: list all.
         let q = if selected.is_some_and(|i| options.get(i) == Some(&query.as_str())) { String::new() } else { fold(query) };
         let mut matches: Vec<(usize, i32)> = options.iter().enumerate().filter_map(|(i, o)| fuzzy(&fold(o), &q).map(|s| (i, s))).collect();
@@ -226,7 +226,7 @@ impl Ui {
         let dismissed = self.floating(id.child("panel"), *open, cfg, |ui| {
             let saved = ui.scope;
             ui.scope = id;
-            let edit = ui.text_field("query", &mut query, "Escribe un comando…", inner);
+            let edit = ui.text_field("query", &mut query, ui.locale.type_command, inner);
             ui.scope = saved;
             reset = edit.changed;
             if edit.submitted && !ranked.is_empty() {
@@ -239,7 +239,7 @@ impl Ui {
                 }
             }
             if ranked.is_empty() {
-                ui.muted("Ningún comando coincide.");
+                ui.muted(ui.locale.no_commands);
             }
         });
         if reset {
@@ -325,7 +325,7 @@ impl Ui {
         let focused = edit.is_some_and(|e| e.focused);
         // A press on a result moves the focus to it: keep the list until the click lands.
         let pressing_result = self.active.is_some_and(|a| (0..ranked.len()).any(|n| rows.with(n as u64) == a));
-        let anchor = self.rect_of(field).unwrap_or_default();
+        let anchor = self.layout_rect(field).unwrap_or_default();
         let row_w = anchor.w.max(width) - 12.0;
         let shown = is_open && (focused || pressing_result);
         let mut cfg = self.menu_cfg(anchor);
@@ -337,7 +337,7 @@ impl Ui {
                 }
             }
             if ranked.is_empty() {
-                ui.muted("Sin resultados");
+                ui.muted(ui.locale.no_results);
             }
         });
         if let Some(i) = picked {

@@ -22,7 +22,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -42,9 +42,13 @@ jobs:
       # Drives the documentation app headlessly through every page, checks
       # that partial repaints match full repaints pixel for pixel, and that
       # the interface comes to rest. The frames are kept as an artifact.
+      # Fails if a steady frame of the library allocates memory, or if a
+      # virtual list costs more with more rows; times are only printed.
+      - name: Benchmarks
+        run: cargo run --release -p morfo-demo --bin bench -- --check
       - name: Visual run
         run: cargo run --release -p morfo-demo --bin snapshot
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: frames

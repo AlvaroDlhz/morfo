@@ -1,0 +1,28 @@
+[package]
+name = "morfo-winit"
+description = "Window host for morfo-ui: winit event loop, GPU or CPU painting, input, input methods, clipboard, screen readers and the system's motion setting."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["gui", "ui", "winit", "window"]
+categories = ["gui"]
+
+[features]
+default = ["clipboard"]
+# The system clipboard (arboard).
+clipboard = ["dep:arboard"]
+
+[dependencies]
+morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
+morfo-skia = { path = "../morfo-skia", version = "0.1.0" }
+morfo-wgpu = { path = "../morfo-wgpu", version = "0.1.0" }
+morfo-fonts = { path = "../morfo-fonts", version = "0.1.0" }
+winit = "0.30"
+softbuffer = "0.4"
+pollster = "1"
+accesskit = "0.25"
+accesskit_winit = "0.34"
+arboard = { version = "3", default-features = false, optional = true }

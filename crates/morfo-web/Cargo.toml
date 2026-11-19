@@ -15,8 +15,8 @@ morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
-    "AddEventListenerOptions", "CanvasRenderingContext2d", "Clipboard", "ClipboardEvent", "CompositionEvent", "CssStyleDeclaration",
-    "DataTransfer", "Document", "DomRect", "Element", "Event", "EventTarget", "HtmlCanvasElement", "HtmlElement", "HtmlTextAreaElement", "InputEvent", "Node",
-    "KeyboardEvent", "MouseEvent", "Navigator", "Performance", "PointerEvent", "Storage", "TextMetrics",
+    "AddEventListenerOptions", "CanvasGradient", "CanvasRenderingContext2d", "Clipboard", "ClipboardEvent", "CompositionEvent", "CssStyleDeclaration",
+    "DataTransfer", "Document", "DomRect", "Element", "Event", "EventTarget", "HtmlCanvasElement", "HtmlElement", "HtmlTextAreaElement", "ImageData", "InputEvent", "Node",
+    "KeyboardEvent", "Location", "MouseEvent", "Navigator", "Performance", "PointerEvent", "Storage", "TextMetrics",
     "WheelEvent", "Window",
 ] }

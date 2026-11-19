@@ -13,9 +13,7 @@ use crate::theme::{ACCENT, BORDER, MUTED, ON_ACCENT, RAISED, TEXT};
 use crate::ui::{Dir, Key, Node, Ui, LINE_HEIGHT};
 use crate::widgets::{Size, Variant};
 
-const MONTHS: [&str; 12] =
-    ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
-const WEEKDAYS: [&str; 7] = ["L", "M", "X", "J", "V", "S", "D"];
+use crate::locale::Locale;
 
 /// A day of the (proleptic Gregorian) calendar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -100,43 +98,53 @@ impl Date {
 }
 
 impl fmt::Display for Date {
-    /// `16 nov 2026`
+    /// `Nov 16, 2026` (in English; see [`Locale::date`] for others).
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let name = MONTHS[(self.month.clamp(1, 12) - 1) as usize];
-        write!(f, "{} {} {}", self.day, &name[..3], self.year)
+        f.write_str(&Locale::ENGLISH.date(*self))
     }
 }
 
-/// A key combination such as Ctrl+Mayús+K, as recorded by
+/// A key combination such as Ctrl+Shift+K, as recorded by
 /// [`Ui::shortcut_input`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Shortcut {
     pub ctrl: bool,
     pub shift: bool,
-    /// The key itself: a letter or digit in upper case, or a name
-    /// ("Intro", "Espacio", "Izquierda").
+    /// The key itself: a letter or digit in upper case, or the name of a
+    /// key in English ("Enter", "Space", "Left", "Right", "Up", "Down",
+    /// "Home", "End"), whatever the language it is shown in.
     pub key: String,
 }
 
 impl Shortcut {
-    /// Its keys in order, one per key cap.
-    pub fn parts(&self) -> Vec<&str> {
+    /// Its keys in order, one per key cap, named in `locale`.
+    pub fn parts_in<'a>(&'a self, locale: &Locale) -> Vec<&'a str> {
         let mut parts = Vec::with_capacity(3);
         if self.ctrl {
-            parts.push("Ctrl");
+            parts.push(locale.keys.ctrl);
         }
         if self.shift {
-            parts.push("Mayús");
+            parts.push(locale.keys.shift);
         }
-        parts.push(self.key.as_str());
+        parts.push(locale.key_name(&self.key));
         parts
+    }
+
+    /// Its keys in order, in English.
+    pub fn parts(&self) -> Vec<&str> {
+        self.parts_in(&Locale::ENGLISH)
+    }
+
+    /// `Ctrl+Mayús+K` and the like, in `locale`.
+    pub fn label(&self, locale: &Locale) -> String {
+        self.parts_in(locale).join("+")
     }
 }
 
 impl fmt::Display for Shortcut {
-    /// `Ctrl+Mayús+K`
+    /// `Ctrl+Shift+K`
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.parts().join("+"))
+        f.write_str(&self.label(&Locale::ENGLISH))
     }
 }
 
@@ -158,6 +166,55 @@ fn field_box(ui: &mut Ui, r: Rect, hover: f32, on: f32, a: f32) {
 }
 
 impl Ui {
+    /// A form field: `label` above whatever `f` builds (a text field, a
+    /// picker), and below it `error` when there is one, in a red that
+    /// reads well on the theme's background. Screen readers hear the field
+    /// as a group named by its label, and the error as soon as it appears
+    /// (WCAG 3.3.1). Keys inside `f` are namespaced under `key`.
+    ///
+    /// ```
+    /// # use morfo::{Theme, Ui, Vec2};
+    /// # let mut ui = Ui::new(Theme::dark());
+    /// # ui.begin(0.0, Vec2::new(800.0, 600.0));
+    /// # let mut email = String::new();
+    /// let error = (!email.is_empty() && !email.contains('@')).then_some("An email address has an @");
+    /// ui.field("email", "Email", error, |ui| {
+    ///     ui.text_field("input", &mut email, "you@example.com", 280.0);
+    /// });
+    /// # ui.end();
+    /// ```
+    pub fn field(&mut self, key: &str, label: &str, error: Option<&str>, f: impl FnOnce(&mut Ui)) {
+        let id = self.declare(key);
+        let gap = self.theme.gap * 0.4;
+        let (origin, size) = self.group(id, Dir::Column, Vec2::ZERO, gap, None, |ui| {
+            ui.within(id, |ui| {
+                ui.describe_group(id, Role::Group, label, |ui| {
+                    ui.muted(label);
+                    f(ui);
+                    if let Some(e) = error {
+                        ui.error_text(e);
+                    }
+                })
+            })
+        });
+        self.advance(size);
+        let _ = origin;
+    }
+
+    /// A line of error text, announced when it appears.
+    fn error_text(&mut self, text: &str) {
+        let id = self.auto_id();
+        let size = self.theme.font * 0.9;
+        let w = self.text.width(text, size);
+        let target = self.alloc(Vec2::new(w, size * LINE_HEIGHT));
+        let (r, life) = self.enter(id, target, Smooth);
+        self.describe(id, Role::Status, text, r, None, None);
+        let bg = self.pal[crate::theme::BG];
+        let light = Color::hex(0xff6b6b);
+        let red = if crate::theme::contrast(light, bg) >= 4.5 { light } else { Color::hex(0xb3261e) };
+        self.draw.add_text(r.min(), size, red.fade(self.alpha * life), text);
+    }
+
     /// A field showing a date that opens a month calendar below itself.
     /// The arrows of the calendar change month (the days slide across);
     /// the selection springs from day to day. With the field focused, the
@@ -166,11 +223,11 @@ impl Ui {
     pub fn date_picker(&mut self, key: &str, date: &mut Date) -> bool {
         let id = self.declare(key);
         let (font, pad, h) = (self.theme.font, self.theme.pad * 0.8, self.theme.control);
-        let widest = self.text.width("28 sep 2026", font);
+        let widest = (1..=12).map(|m| self.text.width(&self.locale.date(Date::new(2026, m, 28)), font)).fold(0.0, f32::max);
         let target = self.alloc(Vec2::new(widest + pad * 2.0 + 34.0, h));
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
-        let mut text = date.to_string();
+        let mut text = self.locale.date(*date);
         self.describe(id, Role::ComboBox, key, r, Some(&text), None);
         if hit.clicked {
             self.open = if self.open == Some(id) { None } else { Some(id) };
@@ -199,7 +256,7 @@ impl Ui {
         let a = self.alpha * life;
         let rr = r.scaled(1.0 - 0.03 * press);
         field_box(self, rr, hover, turn, a);
-        text = date.to_string();
+        text = self.locale.date(*date);
         self.draw.add_text(Vec2::new(rr.x + pad, rr.y + (rr.h - font * LINE_HEIGHT) * 0.5), font, self.pal[TEXT].fade(a), &text);
         let icon = self.pal[MUTED].mix(self.pal[ACCENT], turn.clamp(0.0, 1.0));
         calendar_icon(self, Vec2::new(rr.right() - 20.0, rr.center().y), font, icon.fade(a));
@@ -218,8 +275,9 @@ impl Ui {
         let dismissed = self.floating(id.child("panel"), shown, cfg, |ui| {
             ui.scope = id;
             let (year, month) = (viewed.div_euclid(12), (viewed.rem_euclid(12) + 1) as u8);
-            let name = MONTHS[month as usize - 1];
-            let title = format!("{}{} {year}", name[..1].to_uppercase(), &name[1..]);
+            let name = ui.locale.months[month as usize - 1];
+            let mut chars = name.chars();
+            let title = format!("{}{} {year}", chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default(), chars.as_str());
             // The month centered between the two arrows.
             let button = (ui.theme.control * 0.78).round();
             let room = (inner - 2.0 * button - ui.text.width(&title, ui.theme.font) - 2.0 * ui.theme.gap) * 0.5;
@@ -237,7 +295,10 @@ impl Ui {
             ui.scope = saved;
             let small = ui.theme.font * 0.8;
             let head = ui.alloc(Vec2::new(inner, small * LINE_HEIGHT));
-            for (i, d) in WEEKDAYS.iter().enumerate() {
+            let first_day = ui.locale.first_weekday as usize % 7;
+            let names = ui.locale.weekdays;
+            for i in 0..7 {
+                let d = names[(i + first_day) % 7];
                 let w = ui.text.width(d, small);
                 let x = head.x + i as f32 * cell + (cell - w) * 0.5;
                 ui.draw.add_text(Vec2::new(x, head.y), small, ui.pal[MUTED].fade(ui.alpha), d);
@@ -258,7 +319,7 @@ impl Ui {
             ui.animating |= n.e1.tick(&k);
             let slide = n.e1.get();
             let first = Date::new(year, month, 1);
-            let offset = first.weekday() as usize;
+            let offset = (first.weekday() as usize + 7 - first_day) % 7;
             let days = Date::days_in_month(year, month) as usize;
             let a = ui.alpha * (1.0 - slide.abs()).clamp(0.0, 1.0);
             let dx = slide * cell * 2.0;
@@ -286,7 +347,7 @@ impl Ui {
                 let label = day.to_string();
                 let size = ui.theme.font * 0.92;
                 let w = ui.text.width(&label, size);
-                let weekend = slot % 7 >= 5;
+                let weekend = (slot + first_day) % 7 >= 5;
                 let ink = if on {
                     ui.pal[ON_ACCENT]
                 } else if weekend {
@@ -529,7 +590,10 @@ impl Ui {
             let xid = cid.child("x");
             self.enter(xid, x_rect, Snappy);
             let hit = self.hit(xid, x_rect);
-            self.describe(xid, Role::Button, &format!("Quitar {t}"), x_rect, None, None);
+            if self.a11y_on {
+                let name = Locale::fill(self.locale.remove, &[t]);
+                self.describe(xid, Role::Button, &name, x_rect, None, None);
+            }
             if hit.clicked {
                 remove = Some(i);
             }
@@ -683,7 +747,7 @@ impl Ui {
         let mut reset = false;
         let chosen = selected.clone();
         let dismissed = self.floating(id.child("panel"), shown, cfg, |ui| {
-            let e = ui.text_field_id(field, &mut query, "Buscar…", row_w, true);
+            let e = ui.text_field_id(field, &mut query, ui.locale.search, row_w, true);
             reset = e.changed;
             if e.submitted {
                 toggled = matches.get(index).map(|m| m.0);
@@ -695,13 +759,13 @@ impl Ui {
                 }
             }
             if matches.is_empty() {
-                ui.muted("Sin resultados");
+                ui.muted(ui.locale.no_results);
             }
             if !chosen.is_empty() {
                 ui.separator();
                 let saved = ui.scope;
                 ui.scope = id;
-                clear = ui.button_with("quitar", "Quitar todas", Variant::Ghost, Size::Sm).clicked;
+                clear = ui.button_with("quitar", ui.locale.clear_all, Variant::Ghost, Size::Sm).clicked;
                 ui.scope = saved;
             }
         });
@@ -750,20 +814,22 @@ impl Ui {
         let (r, life) = self.enter(id, target, Smooth);
         let hit = self.hit(id, r);
         self.capture_ids.push(id);
-        let text = value.as_ref().map(|s| s.to_string());
-        self.describe(id, Role::TextInput, key, r, text.as_deref(), None);
+        if self.a11y_on {
+            let text = value.as_ref().map(|s| s.label(&self.locale));
+            self.describe(id, Role::TextInput, key, r, text.as_deref(), None);
+        }
         let mut focused = self.focus == Some(id);
         let mut changed = false;
         if focused && !self.focus_changed {
             let named = self.keys.iter().find_map(|k| match k {
-                Key::Enter => Some("Intro"),
-                Key::Space => Some("Espacio"),
-                Key::Left => Some("Izquierda"),
-                Key::Right => Some("Derecha"),
-                Key::Up => Some("Arriba"),
-                Key::Down => Some("Abajo"),
-                Key::Home => Some("Inicio"),
-                Key::End => Some("Fin"),
+                Key::Enter => Some("Enter"),
+                Key::Space => Some("Space"),
+                Key::Left => Some("Left"),
+                Key::Right => Some("Right"),
+                Key::Up => Some("Up"),
+                Key::Down => Some("Down"),
+                Key::Home => Some("Home"),
+                Key::End => Some("End"),
                 _ => None,
             });
             let pressed = self.chord.clone().or_else(|| named.map(str::to_string)).or_else(|| {
@@ -778,7 +844,7 @@ impl Ui {
                 *value = None;
             } else if let Some(k) = pressed {
                 let key = if k.chars().count() == 1 { k.to_uppercase() } else { k };
-                let shortcut = Shortcut { ctrl: self.mods.ctrl, shift: self.mods.shift && key != "Espacio", key };
+                let shortcut = Shortcut { ctrl: self.mods.ctrl, shift: self.mods.shift && key != "Space", key };
                 changed = value.as_ref() != Some(&shortcut);
                 *value = Some(shortcut);
                 // Recorded: let go of the keyboard.
@@ -794,11 +860,12 @@ impl Ui {
         field_box(self, r, hover, on, a);
         let small = font * 0.85;
         if focused {
-            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (h - font * LINE_HEIGHT) * 0.5), font, self.pal[MUTED].fade(a), "Pulsa una combinación…");
+            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (h - font * LINE_HEIGHT) * 0.5), font, self.pal[MUTED].fade(a), self.locale.press_keys);
         } else if let Some(s) = value.as_ref() {
             let cap_h = (h * 0.62).round();
             let mut x = r.x + 10.0;
-            for (i, part) in s.parts().iter().enumerate() {
+            let locale = self.locale;
+            for (i, part) in s.parts_in(&locale).iter().enumerate() {
                 if i > 0 {
                     self.draw.add_text(Vec2::new(x, r.y + (h - small * LINE_HEIGHT) * 0.5), small, self.pal[MUTED].fade(a), "+");
                     x += self.text.width("+", small) + 6.0;
@@ -820,7 +887,7 @@ impl Ui {
                 x += w + 6.0;
             }
         } else {
-            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (h - font * LINE_HEIGHT) * 0.5), font, self.pal[MUTED].fade(a), "Sin atajo");
+            self.draw.add_text(Vec2::new(r.x + 12.0, r.y + (h - font * LINE_HEIGHT) * 0.5), font, self.pal[MUTED].fade(a), self.locale.no_shortcut);
         }
         changed
     }
@@ -845,7 +912,7 @@ mod tests {
         assert_eq!(Date::days_in_month(2000, 2), 29);
         assert_eq!(Date::new(2026, 2, 31), Date::new(2026, 2, 28));
         assert_eq!(Date::from_unix(1_763_251_200.0), Date::new(2025, 11, 16));
-        assert_eq!(d.to_string(), "16 nov 2026");
+        assert_eq!(d.to_string(), "Nov 16, 2026");
         for days in [-800_000i64, -1, 59, 11_016, 20_000, 2_932_896] {
             assert_eq!(Date::from_days(days).to_days(), days);
         }
@@ -854,8 +921,11 @@ mod tests {
     #[test]
     fn shortcuts_read_as_people_write_them() {
         let s = Shortcut { ctrl: true, shift: true, key: "K".into() };
-        assert_eq!(s.to_string(), "Ctrl+Mayús+K");
-        assert_eq!(Shortcut { ctrl: false, shift: false, key: "Intro".into() }.parts(), ["Intro"]);
+        assert_eq!(s.to_string(), "Ctrl+Shift+K");
+        assert_eq!(s.label(&Locale::SPANISH), "Ctrl+Mayús+K");
+        let enter = Shortcut { ctrl: false, shift: false, key: "Enter".into() };
+        assert_eq!(enter.parts(), ["Enter"]);
+        assert_eq!(enter.parts_in(&Locale::SPANISH), ["Intro"]);
     }
 
     #[test]

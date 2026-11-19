@@ -118,9 +118,9 @@ impl Ui {
     pub fn dialog(&mut self, key: &str, trigger: &str, open: &mut bool, width: f32, f: impl FnOnce(&mut Ui)) {
         let id = self.declare(key);
         let vp = self.viewport();
-        let from = self.rect_of(self.id(trigger)).unwrap_or(Rect::new(vp.x * 0.5, vp.y * 0.5, 0.0, 0.0));
+        let from = self.layout_rect(self.id(trigger)).unwrap_or(Rect::new(vp.x * 0.5, vp.y * 0.5, 0.0, 0.0));
         let cfg = Floating { from, pos: Vec2::ZERO, center: true, width: Some(width), inset: self.theme.pad * 1.2, gap: self.theme.gap, dim: true };
-        if self.floating(id, *open, cfg, |ui| ui.within(id, f)) {
+        if self.floating(id, *open, cfg, |ui| ui.describe_group(id, crate::a11y::Role::Dialog, key, |ui| ui.within(id, f))) {
             *open = false;
         }
     }
@@ -133,11 +133,13 @@ impl Ui {
         let width = self.menu_width(anchor, items.iter().map(|(_, l)| *l));
         let mut picked = None;
         let dismissed = self.floating(id.child("panel"), shown, self.menu_cfg(anchor), |ui| {
-            for (i, (item, label)) in items.iter().enumerate() {
-                if ui.menu_row(id.child(item), label, width, TEXT) {
-                    picked = Some(i);
+            ui.describe_group(id.child("panel"), Role::Menu, label, |ui| {
+                for (i, (item, label)) in items.iter().enumerate() {
+                    if ui.menu_row(id.child(item), label, width, TEXT) {
+                        picked = Some(i);
+                    }
                 }
-            }
+            })
         });
         if (picked.is_some() || dismissed) && self.open == Some(id) {
             self.open = None;
@@ -159,32 +161,34 @@ impl Ui {
         let mut picked = None;
         let mut widest = 0.0f32;
         let dismissed = self.floating(id.child("panel"), shown, self.menu_cfg(anchor), |ui| {
-            for (i, (item, name)) in items.iter().enumerate() {
-                let rid = id.child(item);
-                let cid = rid.child("morfo-contenido");
-                let content = ui.sizes.get(&cid).copied().unwrap_or(Vec2::ZERO);
-                let h = (ui.theme.control * 0.9).round().max(content.y + 14.0);
-                let target = ui.alloc(Vec2::new(width, h));
-                let (r, life) = ui.enter(rid, target, Snappy);
-                let slot = ui.draw.reserve();
-                let gap = ui.theme.gap * 0.6;
-                ui.next_width = Some(width - pad * 2.0);
-                let origin = Vec2::new(r.x + pad, r.y + (r.h - content.y) * 0.5);
-                let (_, size) = ui.group(cid, Dir::Row, Vec2::ZERO, gap, Some(origin), |ui| ui.within(rid, |ui| f(ui, i)));
-                widest = widest.max(size.x);
-                let hit = ui.hit(rid, r);
-                ui.describe(rid, crate::a11y::Role::MenuItem, name, r, None, None);
-                let (hover, _, _) = ui.drive3(rid, hit.hovered || hit.held, hit.held, 0.0, Snappy);
-                let a = ui.alpha * life;
-                let fill = ui.pal[TEXT].with_alpha(0.09 * hover * a);
-                if fill.a > 0.002 {
-                    ui.draw.set(slot, DrawCmd::Rect { rect: r, radius: 10.0, fill, stroke: Color::TRANSPARENT, stroke_width: 0.0 });
+            ui.describe_group(id.child("panel"), Role::Menu, label, |ui| {
+                for (i, (item, name)) in items.iter().enumerate() {
+                    let rid = id.child(item);
+                    let cid = rid.child("morfo-contenido");
+                    let content = ui.sizes.get(&cid).copied().unwrap_or(Vec2::ZERO);
+                    let h = (ui.theme.control * 0.9).round().max(content.y + 14.0);
+                    let target = ui.alloc(Vec2::new(width, h));
+                    let (r, life) = ui.enter(rid, target, Snappy);
+                    let slot = ui.draw.reserve();
+                    let gap = ui.theme.gap * 0.6;
+                    ui.next_width = Some(width - pad * 2.0);
+                    let origin = Vec2::new(r.x + pad, r.y + (r.h - content.y) * 0.5);
+                    let (_, size) = ui.group(cid, Dir::Row, Vec2::ZERO, gap, Some(origin), |ui| ui.within(rid, |ui| f(ui, i)));
+                    widest = widest.max(size.x);
+                    let hit = ui.hit(rid, r);
+                    ui.describe(rid, crate::a11y::Role::MenuItem, name, r, None, None);
+                    let (hover, _, _) = ui.drive3(rid, hit.hovered || hit.held, hit.held, 0.0, Snappy);
+                    let a = ui.alpha * life;
+                    let fill = ui.pal[TEXT].with_alpha(0.09 * hover * a);
+                    if fill.a > 0.002 {
+                        ui.draw.set(slot, DrawCmd::Rect { rect: r, radius: 10.0, fill, stroke: Color::TRANSPARENT, stroke_width: 0.0 });
+                    }
+                    if hit.clicked {
+                        ui.learn(rid, name);
+                        picked = Some(i);
+                    }
                 }
-                if hit.clicked {
-                    ui.learn(rid, name);
-                    picked = Some(i);
-                }
-            }
+            })
         });
         if shown {
             self.sizes.insert(wid, Vec2::new(widest, 0.0));
@@ -246,7 +250,7 @@ impl Ui {
     pub fn tooltip(&mut self, key: &str, text: &str) {
         const DELAY: f64 = 0.45;
         let target = self.id(key);
-        let Some(r) = self.rect_of(target) else { return };
+        let Some(r) = self.layout_rect(target) else { return };
         let hovered = self.pointer_in(r) && self.active.is_none();
         let id = target.child("tooltip");
         let now = self.now;
@@ -338,7 +342,7 @@ impl Ui {
             // It slides in from the edge it is pinned to.
             let r = r.translate(Vec2::new((p - 1.0) * 48.0, 0.0));
             let radius = (r.h * 0.5).min(14.0);
-            self.describe(n.id, Role::Label, &n.text, r, None, None);
+            self.describe(n.id, Role::Status, &n.text, r, None, None);
             self.draw.push(DrawCmd::Shadow { rect: r, radius, blur: 20.0, offset: Vec2::new(0.0, 8.0), color: self.pal[SHADOW].fade(pc) });
             self.draw.rect_stroked(r, radius, self.pal[RAISED].fade(pc), self.pal[BORDER].fade(pc), 1.0);
             // While the shape travels to a new text, the text stays inside.
@@ -392,6 +396,9 @@ impl Ui {
             self.draw.push(DrawCmd::Shadow { rect: r, radius: h * 0.5, blur: 20.0, offset: Vec2::new(0.0, 8.0), color: self.pal[SHADOW].fade(pc) });
             self.draw.rect_stroked(r, h * 0.5, self.pal[RAISED].fade(pc), self.pal[BORDER].fade(pc), 1.0);
             self.draw.add_text(Vec2::new(r.x + pad, r.y + (h - font * LINE_HEIGHT) * 0.5), font, self.pal[TEXT].fade(pc), &t.text);
+            if alive && self.a11y_on {
+                self.describe(t.id, crate::a11y::Role::Status, &t.text, r, None, None);
+            }
             if alive {
                 self.blockers.push((2, r));
                 if self.hit(t.id, r).clicked {

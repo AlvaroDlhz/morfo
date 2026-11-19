@@ -47,6 +47,7 @@ impl Ui {
         let band = 120.0;
         let origin = self.peek(Vec2::ZERO).x;
         let sweep = origin - band + (avail + band * 2.0) * phase;
+        let shimmer = !self.reduced_motion();
         for i in 0..lines {
             let id = self.auto_id();
             let heading = i == 0;
@@ -57,15 +58,21 @@ impl Ui {
             let a = self.alpha * life;
             let base = self.pal[TEXT].with_alpha(if heading { 0.12 } else { 0.08 });
             self.draw.rect(r, h * 0.5, base.fade(a));
-            self.draw.push(DrawCmd::PushClip { rect: r, radius: h * 0.5 });
-            // A soft band: three steps of light.
-            for (k, alpha) in [(-1.0f32, 0.035), (0.0, 0.07), (1.0, 0.035)] {
-                let x = sweep + k * band / 3.0;
-                self.draw.rect(Rect::new(x, r.y, band / 3.0 + 1.0, r.h), 0.0, self.pal[TEXT].with_alpha(alpha * a));
+            if shimmer {
+                self.draw.push(DrawCmd::PushClip { rect: r, radius: h * 0.5 });
+                // A soft band: three steps of light.
+                for (k, alpha) in [(-1.0f32, 0.035), (0.0, 0.07), (1.0, 0.035)] {
+                    let x = sweep + k * band / 3.0;
+                    self.draw.rect(Rect::new(x, r.y, band / 3.0 + 1.0, r.h), 0.0, self.pal[TEXT].with_alpha(alpha * a));
+                }
+                self.draw.push(DrawCmd::PopClip);
             }
-            self.draw.push(DrawCmd::PopClip);
         }
-        self.animating = true;
+        // The shimmer is slow and soft: 30 frames a second are plenty, and
+        // half the work of the screen's rate. With reduced motion, none.
+        if shimmer {
+            self.wake_at(now + 1.0 / 30.0);
+        }
     }
 
     /// A count in a small pill, inline. It pops when the number changes and
@@ -88,7 +95,7 @@ impl Ui {
     /// pops when the number changes and shrinks away at zero.
     pub fn badge_on(&mut self, target: &str, count: u32) {
         let tid = self.id(target);
-        let Some(r) = self.rect_of(tid) else { return };
+        let Some(r) = self.layout_rect(tid) else { return };
         let font = self.theme.font * 0.75;
         let id = tid.child("morfo-badge");
         let corner = Vec2::new(r.right() - 6.0, r.y + 6.0);
@@ -97,10 +104,10 @@ impl Ui {
     }
 
     fn badge_draw(&mut self, id: Id, center: Vec2, count: u32, font: f32, a: f32) {
-        let (bouncy, frame) = (self.steps[Bouncy as usize], self.frame);
+        let (bouncy, frame, reduced) = (self.steps[Bouncy as usize], self.frame, self.reduced_motion());
         let n = self.nodes.entry(id.child("pop")).or_insert_with(Node::new);
         let fresh = n.touch(frame);
-        if !fresh && n.index != count as usize {
+        if !fresh && n.index != count as usize && !reduced {
             // A new number: a little jump.
             n.press.snap(1.0);
             n.press.set(0.0);
@@ -172,11 +179,11 @@ impl Ui {
             self.enter(sid, area, Snappy);
             let hit = if done { Some(self.hit(sid, area)) } else { None };
             let state = if i == *current {
-                "actual"
+                self.locale.step_current
             } else if done {
-                "hecho"
+                self.locale.step_done
             } else {
-                "pendiente"
+                self.locale.step_pending
             };
             self.describe(sid, Role::ListItem, label, area, Some(state), Some(done));
             if hit.as_ref().is_some_and(|h| h.clicked) {

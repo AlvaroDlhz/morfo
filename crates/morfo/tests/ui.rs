@@ -1769,10 +1769,10 @@ fn tags_multiple_choice_and_shortcuts() {
     ui.chord("k");
     frame(&mut ui, &mut t, build);
     ui.set_modifiers(morfo::Modifiers::default());
-    assert_eq!(shortcut.borrow().as_ref().map(|s| s.to_string()), Some("Ctrl+Mayús+K".to_string()));
+    assert_eq!(shortcut.borrow().as_ref().map(|s| s.to_string()), Some("Ctrl+Shift+K".to_string()));
     assert!(!ui.wants_keys(), "recorded, it lets go of the keyboard");
     settle(&mut ui, &mut t, build);
-    assert!(texts(&ui).contains(&"Mayús".to_string()));
+    assert!(texts(&ui).contains(&"Shift".to_string()));
     click(&mut ui, &mut t, field, build);
     ui.key_pressed(Key::Backspace);
     frame(&mut ui, &mut t, build);
@@ -1795,7 +1795,11 @@ fn skeleton_badges_and_steps() {
     for _ in 0..200 {
         frame(&mut ui, &mut t, build);
     }
-    assert!(frame(&mut ui, &mut t, build), "the shimmer keeps moving while loading");
+    // The shimmer keeps going, at 30 frames a second rather than every one.
+    t += 1.0 / 60.0;
+    ui.begin(t, VIEW);
+    build(&mut ui);
+    assert!(ui.end().wake_in.is_some_and(|w| w <= 1.0 / 30.0 + 1e-3), "the shimmer keeps moving while loading");
     assert!(!texts(&ui).contains(&"Cargado".to_string()));
     assert!(texts(&ui).contains(&"3".to_string()) && texts(&ui).contains(&"5".to_string()));
     loading.set(false);
@@ -1934,11 +1938,11 @@ fn numbers_count_up_when_seen() {
     let mut partial = false;
     for _ in 0..40 {
         frame(&mut ui, &mut t, build);
-        partial |= texts(&ui).iter().any(|s| s != "12.480" && !s.is_empty());
+        partial |= texts(&ui).iter().any(|s| s != "12,480" && !s.is_empty());
     }
     assert!(partial, "it showed the numbers on the way");
     settle(&mut ui, &mut t, build);
-    assert_eq!(texts(&ui), ["12.480"]);
+    assert_eq!(texts(&ui), ["12,480"]);
 }
 
 #[test]
@@ -2472,4 +2476,771 @@ fn cards_far_from_view_are_not_built() {
     ui.text_input("Ana");
     frame(&mut ui, &mut t, build);
     assert_eq!(*name.borrow(), "Ana", "typing still reaches the field out of view");
+}
+
+// ----- reduced motion ---------------------------------------------------------
+
+use morfo::MotionPreference;
+
+#[test]
+fn reduced_motion_is_brief_and_never_overshoots() {
+    let run = |pref: MotionPreference| {
+        let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+        ui.set_motion(pref);
+        let open = Cell::new(false);
+        let build = |ui: &mut Ui| {
+            ui.reveal("extra", open.get(), |ui| {
+                ui.label("uno");
+                ui.label("dos");
+            });
+            ui.button("debajo", "Debajo");
+        };
+        settle(&mut ui, &mut t, build);
+        let start = ui.rect_of(ui.id("debajo")).unwrap().y;
+        open.set(true);
+        let mut furthest = start;
+        let mut frames = 0;
+        for _ in 0..600 {
+            frames += 1;
+            let moving = frame(&mut ui, &mut t, build);
+            furthest = furthest.max(ui.rect_of(ui.id("debajo")).unwrap().y);
+            if !moving {
+                break;
+            }
+        }
+        (frames, furthest - ui.rect_of(ui.id("debajo")).unwrap().y, ui.rect_of(ui.id("debajo")).unwrap().y - start)
+    };
+    let (full, _, moved) = run(MotionPreference::Full);
+    let (reduced, overshoot, moved_r) = run(MotionPreference::Reduced);
+    let (off, _, moved_o) = run(MotionPreference::Off);
+    assert!(moved > 10.0 && (moved - moved_r).abs() < 0.5 && (moved - moved_o).abs() < 0.5, "same place in the end");
+    assert!(reduced * 2 < full, "reduced is brief: {reduced} vs {full} frames");
+    assert!(overshoot.abs() < 0.01, "and never goes past: {overshoot}");
+    assert!(off <= 2, "off is immediate: {off} frames");
+}
+
+#[test]
+fn reduced_motion_leaves_out_what_only_decorates() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    ui.set_motion(MotionPreference::Reduced);
+    let blue = Color::hex(0x2050e0);
+    let view = Cell::new(0usize);
+    let build = |ui: &mut Ui| {
+        ui.scroll("pagina", 300.0, |ui| {
+            ui.space(200.0);
+            ui.parallax("paisaje", 120.0, &[0.5], |ui, _| {
+                ui.surface("capa", Vec2::new(200.0, 120.0), 0.0, blue);
+            });
+            ui.space(600.0);
+        });
+        let v = view.get();
+        ui.transition("vistas", v, Transition::Slide, |ui| ui.label(if v == 0 { "Uno" } else { "Dos" }));
+    };
+    settle(&mut ui, &mut t, build);
+    // Parallax: the layer moves with the page.
+    let layer = |ui: &Ui| rects_of(ui, blue)[0].y;
+    let window = |ui: &Ui| ui.rect_of(ui.find("paisaje").unwrap()).unwrap().y;
+    let gap = layer(&ui) - window(&ui);
+    ui.pointer_moved(ui.rect_of(ui.id("pagina")).unwrap().center());
+    ui.scroll_wheel(-100.0);
+    settle(&mut ui, &mut t, build);
+    assert!((layer(&ui) - window(&ui) - gap).abs() < 0.5, "no depth");
+    // Past the end of the scroll: no bounce.
+    let top = window(&ui);
+    ui.scroll_wheel(-1.0e5);
+    let mut lowest = f32::MAX;
+    for _ in 0..200 {
+        let moving = frame(&mut ui, &mut t, build);
+        lowest = lowest.min(window(&ui));
+        if !moving {
+            break;
+        }
+    }
+    assert!(window(&ui) - lowest < 0.5 && window(&ui) < top, "it stops at the end without stretching");
+    // A slide between views becomes a cross-fade: nothing travels sideways.
+    let home = text_at(&ui, "Uno").unwrap().0;
+    view.set(1);
+    for _ in 0..60 {
+        frame(&mut ui, &mut t, build);
+        for s in ["Uno", "Dos"] {
+            if let Some((p, _)) = text_at(&ui, s) {
+                assert!((p.x - home.x).abs() < 0.5, "«{s}» moved sideways to {}", p.x);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_loading_skeleton_does_not_hold_every_frame() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| ui.skeleton("perfil", true, 3, |ui| ui.label("Cargado"));
+    settle(&mut ui, &mut t, build);
+    // At rest between shimmer steps, asking to be woken at 30 fps.
+    t += 1.0 / 60.0;
+    ui.begin(t, VIEW);
+    build(&mut ui);
+    let out = ui.end();
+    assert!(!out.animating);
+    let wake = out.wake_in.expect("the shimmer asks for its next step");
+    assert!((wake - 1.0 / 30.0).abs() < 1e-3, "{wake}");
+    // With reduced motion it is still and asks for nothing.
+    ui.set_motion(MotionPreference::Reduced);
+    settle(&mut ui, &mut t, build);
+    t += 1.0;
+    ui.begin(t, VIEW);
+    build(&mut ui);
+    assert!(ui.end().wake_in.is_none());
+}
+
+// ----- the components' own words ---------------------------------------------
+
+#[test]
+fn the_components_speak_the_chosen_language() {
+    use morfo::{Date, Locale};
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let date = RefCell::new(Date::new(2026, 11, 16));
+    let build = |ui: &mut Ui| {
+        ui.date_picker("fecha", &mut date.borrow_mut());
+        ui.count_up("n", 12480.5, 1, 20.0);
+    };
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"Nov 16, 2026".to_string()), "{:?}", texts(&ui));
+    assert!(texts(&ui).contains(&"12,480.5".to_string()));
+    // The calendar starts its weeks on Sunday in English.
+    let fecha = ui.find("fecha").unwrap();
+    click(&mut ui, &mut t, fecha, build);
+    settle(&mut ui, &mut t, build);
+    let shown = texts(&ui);
+    let su = shown.iter().position(|s| s == "Su").unwrap();
+    assert_eq!(shown[su + 1], "Mo");
+    assert!(shown.contains(&"November 2026".to_string()));
+    ui.key_pressed(Key::Escape);
+    frame(&mut ui, &mut t, build);
+
+    ui.set_locale(Locale::SPANISH);
+    settle(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"16 nov 2026".to_string()));
+    assert!(texts(&ui).contains(&"12.480,5".to_string()));
+}
+
+// ----- images -------------------------------------------------------------------
+
+#[test]
+fn images_are_registered_shown_replaced_and_removed() {
+    use morfo::{Fit, Role};
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    assert!(ui.add_image(2, 2, vec![0; 15]).is_none(), "the bytes must match the size");
+    let id = ui.add_image(4, 2, vec![255; 4 * 2 * 4]).unwrap();
+    assert_eq!(ui.image_size(id), Some(Vec2::new(4.0, 2.0)));
+    let build = |ui: &mut Ui| ui.image("foto", id, Vec2::new(100.0, 100.0), Fit::Cover, "Una foto");
+    ui.set_accessibility(true);
+    settle(&mut ui, &mut t, build);
+    let image = |ui: &Ui| {
+        ui.draw_list().commands().iter().find_map(|c| {
+            if let DrawCmd::Image { rect, uv, version, tint, .. } = *c {
+                Some((rect, uv, version, tint))
+            } else {
+                None
+            }
+        })
+    };
+    let (rect, uv, version, tint) = image(&ui).expect("drawn");
+    assert_eq!((rect.w, rect.h), (100.0, 100.0));
+    // A 2:1 picture in a square box: half of its width shows, centered.
+    assert_eq!(uv, morfo::Rect::new(0.25, 0.0, 0.5, 1.0));
+    assert!(tint.a > 0.99);
+    assert!(ui.access_nodes().iter().any(|n| n.role == Role::Image && n.label == "Una foto"));
+    // New pixels: a new version, so every backend uploads them again.
+    assert!(ui.replace_image(id, 2, 2, vec![0; 16]));
+    frame(&mut ui, &mut t, build);
+    assert_eq!(image(&ui).unwrap().2, version + 1);
+    assert_eq!(ui.draw_list().image(id).unwrap().width, 2);
+    ui.remove_image(id);
+    frame(&mut ui, &mut t, build);
+    assert!(image(&ui).is_none(), "a removed image is not drawn");
+    assert!(!ui.replace_image(id, 2, 2, vec![0; 16]));
+}
+
+// ----- touch and scrolling ------------------------------------------------------
+
+/// A finger from `from` to `to` in `steps` frames, then lifted.
+fn swipe(ui: &mut Ui, t: &mut f64, from: Vec2, to: Vec2, steps: u32, mut f: impl FnMut(&mut Ui)) {
+    ui.touch_started(from);
+    frame(ui, t, &mut f);
+    for k in 1..=steps {
+        ui.touch_moved(from + (to - from) * (k as f32 / steps as f32));
+        frame(ui, t, &mut f);
+    }
+    ui.touch_ended(to, false);
+    frame(ui, t, &mut f);
+}
+
+#[test]
+fn a_finger_scrolls_flings_and_taps() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let clicks = Cell::new(0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("lista", 300.0, |ui| {
+            for i in 0..60 {
+                if ui.button(&format!("b{i}"), &format!("Fila {i}")).clicked {
+                    clicks.set(clicks.get() + 1);
+                }
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let row = |ui: &Ui| ui.rect_of(ui.find("b2").unwrap()).unwrap().y;
+    let start = row(&ui);
+    let on = ui.rect_of(ui.find("b3").unwrap()).unwrap().center();
+    // A drag that starts on a button scrolls, and does not press it.
+    swipe(&mut ui, &mut t, on, on - Vec2::new(0.0, 120.0), 6, build);
+    assert_eq!(clicks.get(), 0, "a drag is not a click");
+    let after_drag = row(&ui);
+    // It follows the finger from the moment the drag is recognized (the
+    // first step, 20 px), without a jump.
+    assert!(start - after_drag > 95.0, "the content followed the finger: {start} → {after_drag}");
+    // Let go fast: it keeps going on its own, then rests.
+    settle(&mut ui, &mut t, build);
+    assert!(row(&ui) < after_drag - 20.0, "flung further: {after_drag} → {}", row(&ui));
+    // A tap is a click, and leaves no hover behind: the row in the middle
+    // of the list.
+    let list = ui.rect_of(ui.id("lista")).unwrap();
+    let middle = (0..60)
+        .filter_map(|i| ui.find(&format!("b{i}")))
+        .min_by(|&a, &b| {
+            let d = |id| (ui.rect_of(id).unwrap().center().y - list.center().y).abs();
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let b = ui.rect_of(middle).unwrap().center();
+    ui.touch_started(b);
+    frame(&mut ui, &mut t, build);
+    ui.touch_ended(b, false);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(clicks.get(), 1);
+    frame(&mut ui, &mut t, build);
+    // A finger is broad: a tap just past the side of the button still hits it.
+    let r = ui.rect_of(middle).unwrap();
+    let edge = Vec2::new(r.right() + 4.0, r.center().y);
+    {
+        ui.touch_started(edge);
+        frame(&mut ui, &mut t, build);
+        ui.touch_ended(edge, false);
+        frame(&mut ui, &mut t, build);
+        assert_eq!(clicks.get(), 2);
+    }
+}
+
+#[test]
+fn a_long_press_is_not_a_click() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (clicks, long) = (Cell::new(0), Cell::new(0));
+    let build = |ui: &mut Ui| {
+        let r = ui.button("b", "Mantén");
+        clicks.set(clicks.get() + r.clicked as u32);
+        long.set(long.get() + r.long_pressed as u32);
+    };
+    settle(&mut ui, &mut t, build);
+    let at = ui.rect_of(ui.id("b")).unwrap().center();
+    ui.touch_started(at);
+    for _ in 0..40 {
+        frame(&mut ui, &mut t, build);
+    }
+    ui.touch_ended(at, false);
+    frame(&mut ui, &mut t, build);
+    assert_eq!((long.get(), clicks.get()), (1, 0), "reported once, and the release is not a click");
+}
+
+#[test]
+fn the_scroll_bar_drags_and_page_keys_and_focus_move_the_view() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.scroll("lista", 300.0, |ui| {
+            for i in 0..60 {
+                ui.button(&format!("b{i}"), &format!("Fila {i}"));
+            }
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let area = ui.rect_of(ui.id("lista")).unwrap();
+    let row0 = |ui: &Ui| ui.rect_of(ui.find("b0").unwrap()).unwrap().y;
+    let top = row0(&ui);
+    // The bar, dragged to the bottom: the content goes to its end.
+    let grab = Vec2::new(area.right() - 4.0, area.y + 10.0);
+    drag(&mut ui, &mut t, grab, Vec2::new(grab.x, area.bottom() + 50.0), build);
+    settle(&mut ui, &mut t, build);
+    assert!(text_at(&ui, "Fila 59").is_some(), "dragged to the end");
+    // Page Up, with the pointer over the area: a screen back.
+    let before = row0(&ui);
+    ui.pointer_moved(area.center());
+    ui.key_pressed(Key::PageUp);
+    settle(&mut ui, &mut t, build);
+    assert!(row0(&ui) - before > 200.0, "a page up: {before} → {}", row0(&ui));
+    // Back at the top, Tab through the rows: the view follows the focus.
+    ui.key_pressed(Key::Home);
+    ui.scroll_wheel(1.0e6);
+    settle(&mut ui, &mut t, build);
+    assert!((row0(&ui) - top).abs() < 0.5);
+    ui.pointer_left();
+    for _ in 0..15 {
+        ui.key_pressed(Key::Tab);
+        frame(&mut ui, &mut t, build);
+    }
+    settle(&mut ui, &mut t, build);
+    let focused = ui.rect_of(ui.focused().unwrap()).unwrap();
+    assert!(focused.y >= area.y && focused.bottom() <= area.bottom(), "the focused row is in view: {focused:?} in {area:?}");
+}
+
+// ----- adaptation policy, text size, retention ---------------------------------
+
+#[test]
+fn the_adaptation_policy_decides_when_the_layout_moves() {
+    use morfo::Adaptation;
+    let run = |policy: Adaptation, request: bool| {
+        let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+        ui.set_adaptation(policy);
+        let build = |ui: &mut Ui| {
+            ui.adaptive_actions("bar", &ITEMS);
+            ui.suggestions("quick", "Quick:", "bar", &ITEMS, 2);
+        };
+        settle(&mut ui, &mut t, build);
+        let c = ui.id("bar").child("c");
+        for _ in 0..6 {
+            click(&mut ui, &mut t, c, build);
+        }
+        ui.pointer_left();
+        if request {
+            ui.adapt_now();
+        }
+        settle(&mut ui, &mut t, build);
+        let moved = ui.rect_of(c).unwrap().x < ui.rect_of(ui.id("bar").child("a")).unwrap().x;
+        let suggested = ui.rect_of(ui.id("quick").child("c")).is_some();
+        (moved, suggested)
+    };
+    assert_eq!(run(Adaptation::Live, false), (true, true));
+    assert_eq!(run(Adaptation::OnRequest, false), (false, true), "stable until asked");
+    assert_eq!(run(Adaptation::OnRequest, true), (true, true));
+    assert_eq!(run(Adaptation::Suggest, true), (false, true), "only suggestions");
+    assert_eq!(run(Adaptation::Off, true), (false, false), "nothing");
+}
+
+#[test]
+fn larger_text_reflows_and_controls_grow_to_fit() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.paragraph("Un párrafo bastante largo que a doble tamaño necesita bastantes más líneas para caber en el mismo ancho.");
+        ui.button("ok", "Aceptar");
+    };
+    settle(&mut ui, &mut t, build);
+    let lines = |ui: &Ui| texts(ui).len();
+    let (before, button) = (lines(&ui), ui.rect_of(ui.id("ok")).unwrap());
+    ui.set_text_scale(2.0);
+    settle(&mut ui, &mut t, build);
+    assert!(lines(&ui) > before, "more lines: {before} → {}", lines(&ui));
+    let bigger = ui.rect_of(ui.id("ok")).unwrap();
+    assert!(bigger.h > button.h * 1.3 && bigger.w > button.w * 1.6, "{button:?} → {bigger:?}");
+}
+
+#[test]
+fn a_retention_period_forgets_old_habits() {
+    let mut p = morfo::Profile::new();
+    p.record(morfo::Id(1), 0.0);
+    p.record(morfo::Id(2), 100.0);
+    p.prune(150.0, 120.0);
+    assert_eq!(p.count(morfo::Id(1)), 0, "used 150 s ago: forgotten");
+    assert_eq!(p.count(morfo::Id(2)), 1);
+}
+
+#[test]
+fn screen_readers_get_a_tree_with_states_and_announcements() {
+    use morfo::Role;
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    ui.set_accessibility(true);
+    let open = Cell::new(Some(0usize));
+    let build = |ui: &mut Ui| {
+        ui.card("tarjeta", |ui| {
+            ui.button("ok", "Aceptar");
+            ui.progress(0.4, 100.0);
+        });
+        let mut o = open.get();
+        ui.accordion("faq", &["Uno", "Dos"], &mut o, |ui, _| ui.label("Cuerpo"));
+        open.set(o);
+    };
+    ui.toast("Guardado");
+    settle(&mut ui, &mut t, build);
+    // Settle leaves the toast gone; build a frame while it is still up.
+    let mut ui2 = Ui::new(Theme::dark());
+    ui2.set_accessibility(true);
+    ui2.begin(0.0, VIEW);
+    ui2.toast("Guardado");
+    ui2.end();
+    ui2.begin(0.1, VIEW);
+    build(&mut ui2);
+    ui2.end();
+    let nodes = ui2.access_nodes();
+    let card = nodes.iter().find(|n| n.role == Role::Group).expect("the card is a group");
+    let ok = nodes.iter().find(|n| n.label == "ok" || n.label == "Aceptar").unwrap();
+    assert_eq!(ok.parent, Some(card.id), "the button is inside the card");
+    let bar = nodes.iter().find(|n| n.role == Role::ProgressBar).expect("the progress bar is described");
+    assert_eq!(bar.value.as_deref(), Some("40 %"));
+    let headers: Vec<_> = nodes.iter().filter(|n| n.label == "Uno" || n.label == "Dos").collect();
+    assert_eq!(headers.iter().map(|n| n.expanded).collect::<Vec<_>>(), [Some(true), Some(false)]);
+    let toast = nodes.iter().find(|n| n.label == "Guardado").expect("the toast is described");
+    assert!(toast.role == Role::Status && toast.live, "and announced");
+    let _ = (&mut ui, &mut t);
+}
+
+// ----- text editing ---------------------------------------------------------
+
+#[test]
+fn undo_redo_words_and_double_click() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let text = RefCell::new(String::new());
+    let build = |ui: &mut Ui| {
+        ui.text_field("campo", &mut text.borrow_mut(), "", 400.0);
+    };
+    settle(&mut ui, &mut t, build);
+    let field = ui.id("campo");
+    click(&mut ui, &mut t, field, build);
+    // Typed in one go: one step to undo.
+    for w in ["hola", " ", "mundo"] {
+        ui.text_input(w);
+        frame(&mut ui, &mut t, build);
+    }
+    t += 2.0; // a pause: what comes next is another step
+    ui.text_input(" bonito");
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "hola mundo bonito");
+    ui.key_pressed(Key::Undo);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "hola mundo");
+    ui.key_pressed(Key::Undo);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "");
+    ui.key_pressed(Key::Redo);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "hola mundo");
+    // Ctrl+Backspace takes the whole last word.
+    ui.set_modifiers(morfo::Modifiers { ctrl: true, shift: false });
+    ui.key_pressed(Key::Backspace);
+    frame(&mut ui, &mut t, build);
+    ui.set_modifiers(morfo::Modifiers::default());
+    assert_eq!(*text.borrow(), "hola ");
+    // A double click selects the word under it; typing replaces it.
+    let r = ui.rect_of(ui.id("campo")).unwrap();
+    let on = Vec2::new(r.x + 20.0, r.center().y);
+    for _ in 0..2 {
+        ui.pointer_moved(on);
+        ui.pointer_pressed();
+        frame(&mut ui, &mut t, build);
+        ui.pointer_released();
+        frame(&mut ui, &mut t, build);
+    }
+    ui.text_input("adiós");
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "adiós ");
+}
+
+#[test]
+fn passwords_hide_and_numbers_stay_numbers() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    ui.set_accessibility(true);
+    let (pass, num) = (RefCell::new(String::new()), Cell::new(5.0f64));
+    let build = |ui: &mut Ui| {
+        ui.password_field("clave", &mut pass.borrow_mut(), "Contraseña", 200.0);
+        let mut n = num.get();
+        ui.number_field("cantidad", &mut n, 1, (0.0, 10.0), 120.0);
+        num.set(n);
+    };
+    settle(&mut ui, &mut t, build);
+    let clave = ui.id("clave");
+    click(&mut ui, &mut t, clave, build);
+    ui.text_input("secreto");
+    frame(&mut ui, &mut t, build);
+    assert_eq!(*pass.borrow(), "secreto");
+    assert!(!texts(&ui).iter().any(|s| s.contains("secreto")), "the password is not drawn");
+    assert!(texts(&ui).contains(&"•••••••".to_string()));
+    ui.key_pressed(Key::SelectAll);
+    ui.key_pressed(Key::Copy);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(ui.take_clipboard(), None, "a password is never copied");
+    assert!(!ui.access_nodes().iter().any(|n| n.value.as_deref() == Some("secreto")), "nor read out");
+
+    let field = ui.id("cantidad");
+    click(&mut ui, &mut t, field, build);
+    ui.key_pressed(Key::Up);
+    frame(&mut ui, &mut t, build);
+    assert!((num.get() - 5.1).abs() < 1e-9, "Up steps one decimal: {}", num.get());
+    ui.key_pressed(Key::SelectAll);
+    frame(&mut ui, &mut t, build);
+    ui.text_input("4x2.5");
+    frame(&mut ui, &mut t, build);
+    assert!((num.get() - 42.5).abs() < 1e-9, "letters are not taken: {}", num.get());
+    ui.key_pressed(Key::Enter);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(num.get(), 10.0, "Enter brings it within its range");
+    frame(&mut ui, &mut t, build);
+    assert!(texts(&ui).contains(&"10.0".to_string()), "and writes it out: {:?}", texts(&ui));
+}
+
+// ----- rich text --------------------------------------------------------------------
+
+/// A paragraph of styled spans keeps each span's style, wraps as one text
+/// and is read as one sentence.
+#[test]
+fn rich_text_keeps_styles_and_wraps_as_one() {
+    use morfo::{Span, TextStyle};
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    ui.set_accessibility(true);
+    let long = "word ".repeat(60);
+    let spans = [Span::new("Press "), Span::new("Save").bold(), Span::new(" or "), Span::new("Ctrl+S").mono(), Span::new(&long).italic()];
+    settle(&mut ui, &mut t, |ui| {
+        ui.rich(&spans);
+    });
+    let list = ui.draw_list();
+    let runs: Vec<(String, TextStyle, f32, f32)> = list
+        .commands()
+        .iter()
+        .filter_map(|c| {
+            if let DrawCmd::Text { pos, start, len, style, .. } = *c {
+                Some((list.text(start, len).to_string(), style, pos.x, pos.y))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let find = |s: &str| runs.iter().find(|r| r.0.starts_with(s)).unwrap_or_else(|| panic!("{s:?} missing in {runs:?}"));
+    assert_eq!(find("Press").1, TextStyle::REGULAR);
+    assert_eq!(find("Save").1, TextStyle::BOLD);
+    assert_eq!(find("Ctrl+S").1, TextStyle::MONO);
+    assert_eq!(find("word").1, TextStyle::ITALIC);
+    // One line flows across spans; the long one wraps onto more lines.
+    assert!(find("Save").2 > find("Press").2 && find("Save").3 == find("Press").3);
+    let lines: std::collections::BTreeSet<u32> = runs.iter().map(|r| r.3.to_bits()).collect();
+    assert!(lines.len() > 2, "the paragraph wraps: {lines:?}");
+    let labels: Vec<&str> = ui.access_nodes().iter().map(|n| n.label.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("Press Save or Ctrl+Sword word")), "{labels:?}");
+}
+
+// ----- right to left ----------------------------------------------------------------
+
+/// Written right to left, the interface is a mirror image: what starts at
+/// the left starts at the right, clicks land where things are shown,
+/// Hebrew reads from the right, and a text field keeps its caret at the
+/// end of what was typed.
+#[test]
+fn right_to_left_mirrors_the_interface() {
+    use morfo::Locale;
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    ui.set_locale(Locale::ENGLISH.with_rtl(true));
+    let (clicks, text) = (std::cell::Cell::new(0), std::cell::RefCell::new(String::new()));
+    let build = |ui: &mut Ui| {
+        if ui.button("go", "שלום").clicked {
+            clicks.set(clicks.get() + 1);
+        }
+        ui.text_field("f", &mut text.borrow_mut(), "Name", 200.0);
+    };
+    settle(&mut ui, &mut t, build);
+    let go = ui.rect_of(ui.id("go")).unwrap();
+    assert!(go.right() > VIEW.x - 40.0 && go.x > VIEW.x / 2.0, "the first button sits at the right: {go:?}");
+    let go = ui.id("go");
+    click(&mut ui, &mut t, go, build);
+    assert_eq!(clicks.get(), 1, "a click where it is shown reaches it");
+    let list = ui.draw_list();
+    let texts: Vec<(String, f32)> = list
+        .commands()
+        .iter()
+        .filter_map(|c| if let DrawCmd::Text { pos, start, len, .. } = *c { Some((list.text(start, len).to_string(), pos.x)) } else { None })
+        .collect();
+    assert!(texts.iter().any(|(s, _)| s == "םולש"), "Hebrew in reading order: {texts:?}");
+    // Type into the field: the caret ends up right after the text.
+    let f = ui.id("f");
+    click(&mut ui, &mut t, f, build);
+    ui.text_input("abc");
+    settle(&mut ui, &mut t, build);
+    assert_eq!(*text.borrow(), "abc");
+    let list = ui.draw_list();
+    let (x, _) = list
+        .commands()
+        .iter()
+        .find_map(|c| if let DrawCmd::Text { pos, start, len, .. } = *c { (list.text(start, len) == "abc").then_some((pos.x, ())) } else { None })
+        .unwrap();
+    let field = ui.rect_of(f).unwrap();
+    assert!(x > field.x && x < field.x + 30.0, "the field's text starts at its left, in its own order: {x} in {field:?}");
+    let ime = ui.ime_area().unwrap();
+    assert!(ime.x > x && ime.x < x + 60.0, "the caret follows the text: {ime:?} after {x}");
+}
+
+/// A gamepad or remote moves the focus to the nearest control that way.
+#[test]
+fn focus_moves_spatially() {
+    use morfo::Direction;
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let build = |ui: &mut Ui| {
+        ui.row(|ui| {
+            ui.button("a", "A");
+            ui.button("b", "B");
+        });
+        ui.row(|ui| {
+            ui.button("c", "C");
+            ui.button("d", "D");
+        });
+    };
+    settle(&mut ui, &mut t, build);
+    let id = |ui: &Ui, k: &str| ui.find(k).unwrap();
+    let mut step = |ui: &mut Ui, d: Direction| {
+        ui.move_focus(d);
+        frame(ui, &mut t, build);
+        ui.focused()
+    };
+    assert_eq!(step(&mut ui, Direction::Down), Some(id(&ui, "a")), "nothing focused: the first control");
+    assert_eq!(step(&mut ui, Direction::Right), Some(id(&ui, "b")));
+    assert_eq!(step(&mut ui, Direction::Down), Some(id(&ui, "d")));
+    assert_eq!(step(&mut ui, Direction::Left), Some(id(&ui, "c")));
+    assert_eq!(step(&mut ui, Direction::Left), Some(id(&ui, "c")), "nothing further: it stays");
+    assert_eq!(step(&mut ui, Direction::Up), Some(id(&ui, "a")));
+}
+
+/// Something dragged onto a target lands there; let go elsewhere, nothing
+/// happens; and the drag is no click.
+#[test]
+fn drag_and_drop() {
+    let (mut ui, mut t) = (Ui::new(Theme::dark()), 0.0);
+    let (dropped, clicked) = (std::cell::Cell::new(None), std::cell::Cell::new(false));
+    let build = |ui: &mut Ui| {
+        if ui
+            .draggable("card", 7, |ui| {
+                // A control inside: the drag takes the press from it.
+                if ui.button("inner", "Card").clicked {
+                    clicked.set(true);
+                }
+            })
+            .clicked
+        {
+            clicked.set(true);
+        }
+        ui.space(80.0);
+        if let Some(p) = ui.drop_target("bin", |ui, _| ui.label("Drop here")) {
+            dropped.set(Some(p));
+        }
+    };
+    settle(&mut ui, &mut t, build);
+    let (card, bin) = (ui.rect_of(ui.find("card").unwrap()).unwrap(), ui.rect_of(ui.find("bin").unwrap()).unwrap());
+    ui.pointer_moved(card.center());
+    frame(&mut ui, &mut t, build);
+    ui.pointer_pressed();
+    frame(&mut ui, &mut t, build);
+    // Along the way, a few frames.
+    for k in 1..=6 {
+        ui.pointer_moved(card.center() + (bin.center() - card.center()) * (k as f32 / 6.0));
+        frame(&mut ui, &mut t, build);
+    }
+    assert_eq!(ui.dragging(), Some(7));
+    ui.pointer_released();
+    frame(&mut ui, &mut t, build);
+    assert_eq!(dropped.get(), Some(7));
+    assert!(!clicked.get());
+    assert_eq!(ui.dragging(), None);
+    // Dragged and let go away from the target: nothing.
+    dropped.set(None);
+    ui.pointer_moved(card.center());
+    frame(&mut ui, &mut t, build);
+    ui.pointer_pressed();
+    frame(&mut ui, &mut t, build);
+    ui.pointer_moved(card.center() + Vec2::new(300.0, 0.0));
+    frame(&mut ui, &mut t, build);
+    ui.pointer_released();
+    frame(&mut ui, &mut t, build);
+    assert_eq!(dropped.get(), None);
+    // A finger: held still first, then carried over.
+    settle(&mut ui, &mut t, build);
+    ui.touch_started(card.center());
+    for _ in 0..40 {
+        frame(&mut ui, &mut t, build);
+    }
+    assert_eq!(ui.dragging(), Some(7), "a long press picks it up");
+    for k in 1..=6 {
+        ui.touch_moved(card.center() + (bin.center() - card.center()) * (k as f32 / 6.0));
+        frame(&mut ui, &mut t, build);
+    }
+    ui.touch_ended(bin.center(), false);
+    frame(&mut ui, &mut t, build);
+    assert_eq!(dropped.get(), Some(7));
+    assert!(!clicked.get());
+}
+
+/// The test harness drives an interface by keys and reads it back; the
+/// inspector names what is under the pointer.
+#[test]
+fn harness_and_inspector() {
+    use morfo::testing::Harness;
+    let mut h = Harness::new();
+    let mut name = String::new();
+    let mut saved = false;
+    let mut app = |ui: &mut Ui| {
+        ui.card("form", |ui| {
+            ui.text_field("name", &mut name, "Name", 240.0);
+            if ui.button("save", "Save").clicked {
+                saved = true;
+            }
+        });
+        ui.label(if saved { "Saved" } else { "Unsaved" });
+    };
+    h.settle(&mut app);
+    assert!(h.shows("Unsaved"));
+    h.type_into("name", "Ada", &mut app);
+    h.click("save", &mut app);
+    assert!(h.shows("Saved") && !h.shows("Unsaved"));
+    assert!(h.node("Save").is_some_and(|n| n.role == morfo::Role::Button));
+    drop(app);
+    assert_eq!(name, "Ada");
+    assert!(saved);
+
+    let mut h = Harness::new();
+    h.ui.set_inspector(true);
+    let mut app = |ui: &mut Ui| {
+        ui.button("ok", "OK");
+    };
+    h.settle(&mut app);
+    let at = h.ui.rect_of(h.id("ok")).unwrap().center();
+    h.ui.pointer_moved(at);
+    h.frame(&mut app);
+    assert!(h.texts().iter().any(|t| t.starts_with("ok  ")), "{:?}", h.texts());
+    assert!(h.shows("elements ·"));
+}
+
+/// A form field names its group and announces its error.
+#[test]
+fn form_fields_announce_errors() {
+    use morfo::testing::Harness;
+    for theme in [Theme::dark(), Theme::light()] {
+        let mut h = Harness::with(theme, VIEW);
+        let mut email = String::from("ada");
+        let mut app = |ui: &mut Ui| {
+            let error = (!email.contains('@')).then_some("An email address has an @");
+            ui.field("email", "Email", error, |ui| {
+                ui.text_field("input", &mut email, "you@example.com", 280.0);
+            });
+        };
+        h.settle(&mut app);
+        let status = h.node("An email address has an @").expect("the error is described");
+        assert!(status.live && status.role == morfo::Role::Status);
+        let group = h.ui.access_nodes().iter().find(|n| n.label == "Email" && n.role == morfo::Role::Group).expect("a group named by the label");
+        assert!(h.ui.access_nodes().iter().filter(|n| n.parent == Some(group.id)).count() >= 2, "label, input and error inside it");
+        let list = h.ui.draw_list();
+        let red = list
+            .commands()
+            .iter()
+            .find_map(|c| {
+                if let DrawCmd::Text { color, start, len, .. } = *c {
+                    (list.text(start, len).starts_with("An email")).then_some(color)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert!(morfo::contrast(red, h.ui.theme().palette[morfo::theme::BG]) >= 4.5, "readable error");
+        h.type_into("input", "@x.org", &mut app);
+        assert!(h.node("An email address has an @").is_none());
+    }
 }

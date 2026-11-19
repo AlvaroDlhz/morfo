@@ -34,6 +34,30 @@ impl Spring {
     pub const GENTLE: Spring = Spring::new(0.62, 1.0);
     /// Playful overshoot: toggles, selection indicators.
     pub const BOUNCY: Spring = Spring::new(0.45, 0.62);
+    /// What the four become with [`MotionPreference::Reduced`]: short, and
+    /// never past their target.
+    pub const REDUCED: [Spring; 4] = [Spring::new(0.14, 1.0), Spring::new(0.18, 1.0), Spring::new(0.22, 1.0), Spring::new(0.16, 1.0)];
+}
+
+/// How much the interface may move, for people who get dizzy or distracted
+/// by motion (WCAG 2.3.3). Hosts should start from the system's setting
+/// ("reduce motion" on macOS, iOS and Android, "show animations" on
+/// Windows and GNOME, `prefers-reduced-motion` on the web).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MotionPreference {
+    /// Everything moves as designed.
+    #[default]
+    Full,
+    /// Changes still glide, briefly and without overshoot, so the eye can
+    /// follow them; what moves only to decorate does not: no parallax, no
+    /// bouncing past the end of a scroll, no shifting or growing entrances
+    /// (they fade), no choreographies between views (they cross-fade), no
+    /// shared element flying, no shimmer, no counting, no pops.
+    Reduced,
+    /// Nothing animates: every change is immediate. What conveys
+    /// information by moving (a spinner, a caret) still does.
+    Off,
 }
 
 /// The built-in springs every [`Ui`](crate::Ui) precomputes each frame.

@@ -33,6 +33,7 @@ pub enum Prominence {
 
 /// Why the profile ranks an element where it does (see [`Profile::explain`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Reason {
     /// It usually comes right after this other element.
     AfterPrevious(Id),
@@ -72,6 +73,29 @@ struct Follow {
     last: f64,
 }
 
+/// When the interface may rearrange itself after its user. Research on
+/// adaptive menus finds that layouts which move on their own break spatial
+/// memory, and WCAG asks for consistent navigation (3.2.3) and
+/// identification (3.2.4); suggestions the person chooses to use fare
+/// better. Pick the policy that fits the product.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Adaptation {
+    /// Nothing adapts: original order and sizes, no suggestions.
+    Off,
+    /// The layout never moves; only suggestion components
+    /// ([`Ui::suggestions`](crate::Ui::suggestions),
+    /// [`Ui::predicted_action`](crate::Ui::predicted_action)) offer what is
+    /// likely next, for the person to take or ignore.
+    Suggest,
+    /// Rearranges only when asked ([`Ui::adapt_now`](crate::Ui::adapt_now)):
+    /// at start-up, or from a button. Stable for the rest of the session.
+    OnRequest,
+    /// Rearranges as habits form (never under the pointer).
+    #[default]
+    Live,
+}
+
 /// Per-user usage model. Cheap to query: every operation is O(1) per element.
 #[derive(Clone, Debug)]
 pub struct Profile {
@@ -86,6 +110,10 @@ pub struct Profile {
     pub time_of_day: Option<f64>,
     /// While true nothing new is learned; what was learned still applies.
     pub frozen: bool,
+    /// Keep nothing older than this many seconds: habits not used for that
+    /// long are forgotten (`None`: keep them while their score lasts). Not
+    /// saved with the profile; it is the application's policy.
+    pub max_age: Option<f64>,
 }
 
 impl Default for Profile {
@@ -98,6 +126,7 @@ impl Default for Profile {
             pivot: 3.0,
             time_of_day: None,
             frozen: false,
+            max_age: None,
         }
     }
 }
@@ -281,6 +310,19 @@ impl Profile {
         }
     }
 
+    /// Forgets what was last used more than `max_age` seconds before `now`.
+    /// Use it to honor a retention period (see [`Profile::max_age`]).
+    pub fn prune(&mut self, now: f64, max_age: f64) {
+        let old: Vec<Id> = self.map.iter().filter(|(_, u)| now - u.last > max_age).map(|(id, _)| *id).collect();
+        for id in old {
+            self.forget(id);
+        }
+        for list in self.follows.values_mut() {
+            list.retain(|f| now - f.last <= max_age);
+        }
+        self.follows.retain(|_, l| !l.is_empty());
+    }
+
     /// Forgets everything (keeps the settings).
     pub fn clear(&mut self) {
         self.map.clear();
@@ -309,7 +351,8 @@ impl Profile {
     }
 
     /// Inverse of [`encode`](Self::encode); also reads the older format.
-    /// Returns `None` on malformed input.
+    /// Returns `None` on malformed input, including numbers that are not
+    /// finite (a damaged file must not poison every later computation).
     pub fn decode(text: &str) -> Option<Profile> {
         let mut lines = text.lines();
         let mut head = lines.next()?.split(' ');
@@ -317,11 +360,16 @@ impl Profile {
         if version != "morfo1" && version != "morfo2" {
             return None;
         }
-        let mut p = Profile { half_life: head.next()?.parse().ok()?, pivot: head.next()?.parse().ok()?, ..Profile::default() };
+        let half_life: f64 = num(head.next()?)?;
+        let pivot: f32 = num(head.next()?)?;
+        if half_life <= 0.0 || pivot < 0.0 {
+            return None;
+        }
+        let mut p = Profile { half_life, pivot, ..Profile::default() };
         if version == "morfo2" {
             p.time_of_day = match head.next()? {
                 "-" => None,
-                o => Some(o.parse().ok()?),
+                o => Some(num(o)?),
             };
             p.frozen = head.next()? == "1";
         }
@@ -333,8 +381,8 @@ impl Profile {
                 "u" => {
                     let id = hex(f.next()?)?;
                     let mut u = Usage {
-                        score: f.next()?.parse().ok()?,
-                        last: f.next()?.parse().ok()?,
+                        score: num(f.next()?)?,
+                        last: num(f.next()?)?,
                         count: f.next()?.parse().ok()?,
                         level: match f.next()? {
                             "0" => Prominence::Compact,
@@ -346,14 +394,14 @@ impl Profile {
                     };
                     for b in &mut u.by_time {
                         if let Some(v) = f.next() {
-                            *b = v.parse().ok()?;
+                            *b = num(v)?;
                         }
                     }
                     p.map.insert(id, u);
                 }
                 "f" => {
                     let prev = hex(f.next()?)?;
-                    let follow = Follow { next: hex(f.next()?)?, score: f.next()?.parse().ok()?, last: f.next()?.parse().ok()? };
+                    let follow = Follow { next: hex(f.next()?)?, score: num(f.next()?)?, last: num(f.next()?)? };
                     p.follows.entry(prev).or_default().push(follow);
                 }
                 _ => return None,
@@ -361,6 +409,11 @@ impl Profile {
         }
         Some(p)
     }
+}
+
+/// A finite number, or nothing.
+fn num<T: std::str::FromStr + Into<f64> + Copy>(s: &str) -> Option<T> {
+    s.parse::<T>().ok().filter(|v| (*v).into().is_finite())
 }
 
 #[cfg(test)]

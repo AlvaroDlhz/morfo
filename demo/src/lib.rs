@@ -5,7 +5,7 @@
 
 mod pages;
 
-use morfo::{Color, Date, Icon, Profile, Shortcut, Size, Theme, TitleBar, Transition, Ui, Variant, Vec2};
+use morfo::{Color, Date, Icon, Locale, Profile, Shortcut, Size, Theme, TitleBar, Transition, Ui, Variant, Vec2};
 
 /// Tamaño lógico recomendado de la ventana.
 pub const WINDOW: Vec2 = Vec2::new(900.0, 780.0);
@@ -221,6 +221,16 @@ pub struct State {
     pub preview_accent: usize,
     pub preview_on: bool,
     pub iban: String,
+    /// The gallery's photos as images, made the first time they are shown.
+    pub photos: Vec<morfo::ImageId>,
+    /// The interface written right to left, as in a mirror.
+    pub rtl: bool,
+    /// «Entrada»: a password, an amount and an email with its check.
+    pub secret: String,
+    pub amount: f64,
+    pub email: String,
+    /// «Datos»: two baskets things are dragged between.
+    pub baskets: [Vec<usize>; 2],
 }
 
 impl Default for State {
@@ -313,12 +323,18 @@ impl Default for State {
             preview_accent: 1,
             preview_on: true,
             iban: String::new(),
+            photos: Vec::new(),
+            rtl: false,
+            secret: String::new(),
+            amount: 1250.5,
+            email: "ada@".into(),
+            baskets: [vec![0, 1, 2, 3], Vec::new()],
         }
     }
 }
 
 /// Colores de acento que se pueden elegir en la página «Controles».
-pub const ACCENTS: [u32; 6] = [0x7c6cff, 0x22c3a6, 0xff7a59, 0xf5b83d, 0xe5484d, 0x3b82f6];
+pub const ACCENTS: [u32; 6] = [0x6e5ef2, 0x22c3a6, 0xff7a59, 0xf5b83d, 0xe5484d, 0x3b82f6];
 
 // Lo que una recarga en vivo (`morfo-live`) lleva a la nueva compilación:
 // lo elegido y escrito en las páginas. Lo demás empieza de nuevo.
@@ -391,6 +407,9 @@ morfo_live::persist!(State {
     preview_accent,
     preview_on,
     iban,
+    rtl,
+    amount,
+    email,
 });
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -458,7 +477,7 @@ pub fn reason_text(ui: &Ui, reason: Option<morfo::Reason>) -> String {
         }
         Some(Reason::Frequent(n)) => format!("Lo has usado {n} veces"),
         Some(Reason::Rare) => "Apenas lo usas: se hace pequeño".into(),
-        Some(Reason::Recent) | None => "Lo has usado hace poco".into(),
+        _ => "Lo has usado hace poco".into(),
     }
 }
 
@@ -531,6 +550,11 @@ fn lesson_footer(ui: &mut Ui, s: &mut State, key: &str, page: usize) {
 }
 
 pub fn build(ui: &mut Ui, s: &mut State) {
+    // The documentation is in Spanish: so are the components' own words.
+    let locale = Locale::SPANISH.with_rtl(s.rtl);
+    if *ui.locale() != locale {
+        ui.set_locale(locale);
+    }
     let order = course_order();
     let lesson = lesson_of(s.tab);
 
@@ -652,19 +676,13 @@ pub fn load_mono_font() -> Option<Vec<u8>> {
     )
 }
 
-/// Renderizador por GPU con las fuentes del sistema ya cargadas.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn gpu_renderer(device: &morfo_wgpu::wgpu::Device, format: morfo_wgpu::wgpu::TextureFormat) -> morfo_wgpu::Renderer {
-    let mut r = morfo_wgpu::Renderer::new(device, format, load_font()).expect("fuente no válida");
-    if let Some(mono) = load_mono_font() {
-        let _ = r.set_mono_font(mono);
-    }
-    r
-}
-
 /// Renderizador con las fuentes del sistema ya cargadas.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn renderer() -> morfo_skia::Renderer {
+    // Las del sistema, con negrita, cursiva y fuentes de reserva si las hay.
+    if let Some(set) = morfo_winit::Fonts::system().and_then(|f| f.font_set().ok()) {
+        return morfo_skia::Renderer::with_fonts(set);
+    }
     let mut r = morfo_skia::Renderer::new(load_font()).expect("fuente no válida");
     if let Some(mono) = load_mono_font() {
         // Una fuente de código ilegible no impide abrir la documentación.

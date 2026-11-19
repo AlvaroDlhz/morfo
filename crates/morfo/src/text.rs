@@ -2,8 +2,8 @@
 
 use crate::a11y::Role;
 use crate::anim::SpringKind::{Smooth, Snappy};
-use crate::draw::DrawCmd;
-use crate::edit::{edit_text, selection, EditState};
+use crate::draw::{DrawCmd, TextStyle};
+use crate::edit::{edit_text, remember, selection, undo_redo, EditState};
 use crate::geom::{Rect, Vec2};
 use crate::input::{floor_boundary, TextEdit};
 use crate::theme::{ACCENT, BORDER, MUTED, RAISED, TEXT};
@@ -16,6 +16,61 @@ pub(crate) struct Line {
     pub end: usize,
 }
 
+/// A run of text with a look of its own, in a [`Ui::rich`] paragraph:
+/// `Span::new("bold").bold()`, `"plain".into()`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Span<'a> {
+    pub text: &'a str,
+    pub style: TextStyle,
+    /// In the accent color (a highlight, a term being defined).
+    pub accent: bool,
+    /// In the secondary color.
+    pub muted: bool,
+}
+
+impl<'a> Span<'a> {
+    pub fn new(text: &'a str) -> Span<'a> {
+        Span { text, style: TextStyle::REGULAR, accent: false, muted: false }
+    }
+    pub fn bold(mut self) -> Self {
+        self.style = self.style | TextStyle::BOLD;
+        self
+    }
+    pub fn italic(mut self) -> Self {
+        self.style = self.style | TextStyle::ITALIC;
+        self
+    }
+    pub fn mono(mut self) -> Self {
+        self.style = self.style | TextStyle::MONO;
+        self
+    }
+    pub fn accent(mut self) -> Self {
+        self.accent = true;
+        self
+    }
+    pub fn muted(mut self) -> Self {
+        self.muted = true;
+        self
+    }
+}
+
+impl<'a> From<&'a str> for Span<'a> {
+    fn from(text: &'a str) -> Span<'a> {
+        Span::new(text)
+    }
+}
+
+/// A piece of a laid-out [`Ui::rich`] paragraph: bytes `start..end` of span
+/// `span`, at `x` on line `line`.
+#[derive(Clone, Copy)]
+pub(crate) struct Run {
+    span: u16,
+    start: u32,
+    end: u32,
+    x: f32,
+    line: u16,
+}
+
 /// A paragraph broken into lines, kept from frame to frame: it is only
 /// broken again when its text, its width or its font size change.
 #[derive(Default)]
@@ -23,6 +78,9 @@ pub(crate) struct Wrapped {
     /// What `lines` was computed for (0: nothing yet).
     key: u64,
     lines: Vec<Line>,
+    /// For a rich paragraph: its runs, and how many lines they take.
+    runs: Vec<Run>,
+    count: u16,
 }
 
 /// Breaks `text` into lines no wider than `width`: at newlines, between
@@ -110,6 +168,86 @@ impl Ui {
         self.wraps.insert(id, wrapped);
     }
 
+    /// A paragraph of runs in different styles and colors, wrapped to the
+    /// available width as one text:
+    ///
+    /// ```
+    /// # use morfo::{Span, Theme, Ui, Vec2};
+    /// # let mut ui = Ui::new(Theme::dark());
+    /// # ui.begin(0.0, Vec2::new(800.0, 600.0));
+    /// ui.rich(&[Span::new("Press "), Span::new("Save").bold(), Span::new(" or "), Span::new("Ctrl+S").mono(), " to keep it.".into()]);
+    /// # ui.end();
+    /// ```
+    ///
+    /// Without bold or italic faces in the renderer, bold is drawn twice a
+    /// hair apart and italic stays upright.
+    pub fn rich(&mut self, spans: &[Span]) {
+        let id = self.auto_id();
+        let width = self.available_width();
+        let font = self.theme.font;
+        // What the layout depends on: every span's text and look, the width.
+        let mut key = (width.to_bits() as u64) << 32 | font.to_bits() as u64;
+        for s in spans {
+            key = (key ^ crate::ui::hash_str(s.text) ^ (s.style.0 as u64) << 56).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+        let key = key | 1;
+        let mut laid = self.wraps.remove(&id).unwrap_or_default();
+        if laid.key != key {
+            laid.runs.clear();
+            let (mut x, mut line) = (0.0f32, 0u16);
+            for (si, s) in spans.iter().enumerate() {
+                for (k, hard) in s.text.split('\n').enumerate() {
+                    if k > 0 {
+                        line += 1;
+                        x = 0.0;
+                    }
+                    let base = hard.as_ptr() as usize - s.text.as_ptr() as usize;
+                    let mut at = 0;
+                    for tok in hard.split_inclusive(' ') {
+                        let word = tok.trim_end_matches(' ');
+                        let w = self.text.width_styled(word, font, s.style);
+                        if x > 0.0 && x + w > width {
+                            line += 1;
+                            x = 0.0;
+                        }
+                        let (start, end) = (base + at, base + at + tok.len());
+                        // Consecutive pieces of one span on one line are one run.
+                        match laid.runs.last_mut() {
+                            Some(r) if r.span == si as u16 && r.line == line && r.end as usize == start => r.end = end as u32,
+                            _ => laid.runs.push(Run { span: si as u16, start: start as u32, end: end as u32, x, line }),
+                        }
+                        x += self.text.width_styled(tok, font, s.style);
+                        at += tok.len();
+                    }
+                }
+            }
+            laid.count = line + 1;
+            laid.key = key;
+        }
+        let lh = font * LINE_HEIGHT;
+        let target = self.alloc(Vec2::new(width, laid.count as f32 * lh));
+        let (r, life) = self.enter(id, target, Smooth);
+        if self.a11y_on {
+            let all: String = spans.iter().map(|s| s.text).collect();
+            self.describe(id, Role::Label, &all, r, None, None);
+        }
+        let a = self.alpha * life;
+        for run in &laid.runs {
+            let Some(s) = spans.get(run.span as usize) else { continue };
+            let Some(text) = s.text.get(run.start as usize..run.end as usize) else { continue };
+            let color = if s.accent {
+                self.pal[ACCENT]
+            } else if s.muted {
+                self.pal[MUTED]
+            } else {
+                self.pal[TEXT]
+            };
+            let pos = Vec2::new(r.x + run.x, r.y + run.line as f32 * lh);
+            self.draw.add_text_styled(pos, font, color.fade(a), text.trim_end_matches(' '), s.style);
+        }
+        self.wraps.insert(id, laid);
+    }
+
     /// Multi-line text field: wraps as you type, Enter starts a new line,
     /// the arrows move through lines, and it scrolls to keep the caret in
     /// view (the wheel scrolls it too). Selection, clipboard and input
@@ -132,6 +270,7 @@ impl Ui {
         // Pointer: press places the caret (Shift extends), dragging selects.
         if self.active == Some(id) && self.input.down && self.focus == Some(id) {
             if let Some(p) = self.input.pointer {
+                let p = Vec2::new(self.upright_x(p.x, r), p.y);
                 let li = (((p.y - inner.y + offset) / lh).floor().max(0.0) as usize).min(lines.len() - 1);
                 let pos = closest(value, lines[li], p.x - inner.x, font, &*self.text);
                 if self.input.pressed {
@@ -145,10 +284,17 @@ impl Ui {
         }
 
         let mut focused = self.focus == Some(id);
-        if focused {
+        if let (true, Some(at)) = (focused, undo_redo(&mut self.histories, id, &self.keys, value, self.cursor)) {
+            self.cursor = at;
+            self.anchor = None;
+            out.changed = true;
+            touched = true;
+        } else if focused {
             let width = inner.w;
             let m = &*self.text;
-            let mut st = EditState { cursor: self.cursor, anchor: self.anchor, shift: self.mods.shift, copied: None };
+            let busy = !self.keys.is_empty() || !self.typed.is_empty() || !self.pasted.is_empty();
+            let before = busy.then(|| (value.clone(), self.cursor));
+            let mut st = EditState { cursor: self.cursor, anchor: self.anchor, shift: self.mods.shift, word: self.mods.ctrl, copied: None };
             let e = edit_text(&mut st, &self.keys, &self.typed, &self.pasted, value, true, |v, at, k| {
                 let mut ls = Vec::new();
                 wrap(v, width, font, m, &mut ls);
@@ -169,6 +315,10 @@ impl Ui {
                     _ => None,
                 }
             });
+            if let (true, Some((text, at))) = (e.changed, before) {
+                let typing = self.keys.is_empty() && self.pasted.is_empty();
+                remember(&mut self.histories, id, text, at, self.now, typing);
+            }
             self.cursor = st.cursor;
             self.anchor = st.anchor;
             if st.copied.is_some() {
@@ -220,6 +370,8 @@ impl Ui {
         self.animating |= anim;
 
         let a = self.alpha * life;
+        let upright = self.draw.upright_start();
+        self.draw.logical = true;
         self.draw.rect_stroked(r, self.theme.radius * 0.7, self.pal[RAISED].fade(a), stroke.fade(a), 1.0 + 0.6 * focus_t);
         let clip = Rect::new(inner.x - 2.0, r.y + 2.0, inner.w + 4.0, r.h - 4.0);
         self.draw.push(DrawCmd::PushClip { rect: clip, radius: 0.0 });
@@ -251,7 +403,7 @@ impl Ui {
                 self.draw.line(Vec2::new(x, y + lh * 0.12), Vec2::new(x, y + lh * 0.88), 1.6, accent.fade(a));
             }
             self.wake_at(now + if phase < 0.55 { 0.55 - phase } else { 1.0 - phase });
-            self.ime_rect = Some(Rect::new(x, y, 2.0, lh));
+            self.ime_rect = Some(self.upright_rect(Rect::new(x, y, 2.0, lh), r));
             if !self.preedit.is_empty() {
                 // Text being composed floats just below the caret.
                 let w = self.text.width(&self.preedit, font) + 16.0;
@@ -269,6 +421,8 @@ impl Ui {
             let y = inner.y + (inner.h - thumb) * (off / max).clamp(0.0, 1.0);
             self.draw.rect(Rect::new(r.right() - 6.0, y, 3.0, thumb), 2.0, self.pal[MUTED].with_alpha(0.4 * a));
         }
+        self.draw.logical = false;
+        self.draw.upright_end(upright, r);
         self.describe(id, Role::MultilineTextInput, placeholder, r, Some(value.as_str()), None);
         out
     }

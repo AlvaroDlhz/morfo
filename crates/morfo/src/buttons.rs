@@ -13,8 +13,19 @@ use crate::theme::{ACCENT, TEXT};
 use crate::ui::{Response, Ui, LINE_HEIGHT};
 use crate::widgets::{variant_colors, Size, Variant};
 
-/// Built-in vector icons, drawn with strokes: crisp at any size.
+/// Vector icons, crisp at any size: the built-in ones, drawn with strokes,
+/// or your own from SVG path data in a 24×24 box, the size most icon sets
+/// (Lucide, Material, Tabler, Feather) publish:
+///
+/// ```
+/// # use morfo::Icon;
+/// const BELL: Icon = Icon::Stroke("M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10.3 21a1.94 1.94 0 0 0 3.4 0");
+/// const DOT: Icon = Icon::Fill("M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10Z");
+/// ```
+///
+/// Malformed path data draws nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Icon {
     Plus,
     Minus,
@@ -34,6 +45,11 @@ pub enum Icon {
     Star,
     Maximize,
     Restore,
+    /// Your own, outlined: SVG path data in a 24×24 box, stroked in the
+    /// built-in icons' weight.
+    Stroke(&'static str),
+    /// Your own, solid: SVG path data in a 24×24 box, filled.
+    Fill(&'static str),
 }
 
 impl Icon {
@@ -73,6 +89,19 @@ pub(crate) fn draw_icon(list: &mut DrawList, icon: Icon, c: Vec2, size: f32, col
         p(x * co - y * s, x * s + y * co)
     };
     let mut l = |a: Vec2, b: Vec2| list.line(a, b, width, color);
+    match icon {
+        Icon::Stroke(d) | Icon::Fill(d) => {
+            let Some(path) = crate::path::Path::svg(d) else { return };
+            let (view, into) = (Rect::new(0.0, 0.0, 24.0, 24.0), Rect::new(c.x - k, c.y - k, size, size));
+            if matches!(icon, Icon::Fill(_)) {
+                path.fill_in(list, view, into, color);
+            } else {
+                path.stroke_in(list, view, into, width, color);
+            }
+            return;
+        }
+        _ => {}
+    }
     let mut arrow = |a: f32| {
         l(rot(-0.8, 0.0, a), rot(0.8, 0.0, a));
         l(rot(0.25, -0.55, a), rot(0.8, 0.0, a));
@@ -285,7 +314,16 @@ impl Ui {
                 (label, _) => self.learn(id, label),
             }
         }
-        (Response { clicked, hovered: hit.hovered && interactive, held: hit.held && interactive, rect: r }, done)
+        (
+            Response {
+                clicked,
+                hovered: hit.hovered && interactive,
+                held: hit.held && interactive,
+                long_pressed: hit.long_pressed && interactive,
+                rect: r,
+            },
+            done,
+        )
     }
 
     /// A round button with only an icon.

@@ -13,6 +13,7 @@ use crate::ui::{Dir, Node, Response, Ui, LINE_HEIGHT};
 
 /// Visual treatment of a control. Changing it at runtime morphs the control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Variant {
     /// Filled with the accent color: the primary action.
     #[default]
@@ -26,6 +27,7 @@ pub enum Variant {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Size {
     Sm,
     #[default]
@@ -174,7 +176,8 @@ impl Ui {
         // The content wraps and stretches within the card's own width.
         self.next_width = Some((width - 2.0 * pad).max(0.0));
         let ground = std::mem::replace(&mut self.ground, SURFACE);
-        let (origin, mut size) = self.group(id, Dir::Column, Vec2::splat(pad), gap, None, |ui| ui.within(id, f));
+        let (origin, mut size) =
+            self.group(id, Dir::Column, Vec2::splat(pad), gap, None, |ui| ui.describe_group(id, Role::Group, "", |ui| ui.within(id, f)));
         self.ground = ground;
         size.x = width;
         self.sizes.insert(id, size);
@@ -339,6 +342,7 @@ impl Ui {
         let fresh = n.fresh();
         let anim = n.aux.drive(value.clamp(0.0, 1.0), fresh, &k);
         let t = n.aux.get();
+        self.describe_level(id, Role::ProgressBar, "", r, value.clamp(0.0, 1.0));
         self.animating |= anim;
         let a = self.alpha * life;
         self.draw.rect(r, r.h * 0.5, self.pal[BORDER].fade(a));
@@ -438,8 +442,8 @@ impl Ui {
         let now = self.now;
         // Never rearrange under the user's hand: while the pointer is over
         // the group it stays put, and adapts once the pointer moves away.
-        let busy = self.rect_of(group).zip(self.input.pointer).is_some_and(|(r, p)| r.inset(-10.0).contains(p));
-        if !busy {
+        let busy = self.layout_rect(group).zip(self.input.pointer).is_some_and(|(r, p)| r.inset(-10.0).contains(p));
+        if !busy && self.may_rearrange() {
             self.profile.arrange(&mut order, now, 0.2, |(i, _)| group.child(items[i as usize].0));
             // Once the group has seen real use, whatever is being ignored recedes.
             let total: f32 = items.iter().map(|(k, _)| self.profile.score(group.child(k), now)).sum();
@@ -476,10 +480,11 @@ impl Ui {
 
     /// Like [`menu`](Self::menu), but shaped by how this user works: the
     /// options they use come first, and once there is enough history the
-    /// ones they never touch fold away under "Más…". The order is decided
-    /// while the menu is closed, so nothing moves while it is open.
+    /// ones they never touch fold away under "More…" (in the
+    /// [`locale`](Self::set_locale)). The order is decided while the menu is
+    /// closed, so nothing moves while it is open.
     pub fn adaptive_menu(&mut self, key: &str, label: &str, items: &[(&str, &str)]) -> Option<usize> {
-        const MORE: &str = "Más…";
+        let more_label = self.locale.more;
         let id = self.declare(key);
         let (shown, anchor) = self.menu_trigger(id, label);
         let mut order = self.orders.remove(&id).unwrap_or_default();
@@ -488,7 +493,7 @@ impl Ui {
             order.extend((0..items.len() as u32).map(|i| (i, Prominence::Regular)));
         }
         let now = self.now;
-        if !shown {
+        if !shown && self.may_rearrange() {
             self.profile.arrange(&mut order, now, 0.2, |(i, _)| id.child(items[i as usize].0));
             let total: f32 = items.iter().map(|(k, _)| self.profile.score(id.child(k), now)).sum();
             for (n, (i, level)) in order.iter_mut().enumerate() {
@@ -497,7 +502,7 @@ impl Ui {
             }
         }
         let folded = order.iter().any(|(_, level)| *level == Prominence::Compact);
-        let width = self.menu_width(anchor, items.iter().map(|(_, l)| *l).chain([MORE]));
+        let width = self.menu_width(anchor, items.iter().map(|(_, l)| *l).chain([more_label]));
         let mut picked = None;
         let dismissed = self.floating(id.child("panel"), shown, self.menu_cfg(anchor), |ui| {
             for &(i, level) in &order {
@@ -507,7 +512,7 @@ impl Ui {
                 }
             }
             if folded {
-                if !ui.menu_more && ui.menu_row(id.child("morfo-more"), MORE, width, MUTED) {
+                if !ui.menu_more && ui.menu_row(id.child("morfo-more"), more_label, width, MUTED) {
                     ui.menu_more = true;
                 }
                 let more = ui.menu_more;
@@ -535,11 +540,14 @@ impl Ui {
     /// same `items`. Shows nothing until a habit exists. Returns the index
     /// of the shortcut clicked.
     pub fn suggestions(&mut self, key: &str, title: &str, source: &str, items: &[(&str, &str)], max: usize) -> Option<usize> {
+        if self.adaptation == crate::adapt::Adaptation::Off {
+            return None;
+        }
         let id = self.declare(key);
         let src = self.id(source);
         let now = self.now;
         let mut picks = self.orders.remove(&id).unwrap_or_default();
-        let busy = self.rect_of(id).zip(self.input.pointer).is_some_and(|(r, p)| r.inset(-10.0).contains(p));
+        let busy = self.layout_rect(id).zip(self.input.pointer).is_some_and(|(r, p)| r.inset(-10.0).contains(p));
         if !busy {
             picks.clear();
             picks.extend(

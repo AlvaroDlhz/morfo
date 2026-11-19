@@ -108,6 +108,10 @@ impl Ui {
         let mut changed = false;
         let mut x = 0.0;
         let mut under = Rect::default();
+        if self.a11y_on {
+            self.describe(id, Role::TabList, key, r, None, None);
+            self.a11y_parents.push(id);
+        }
         for (i, &w) in widths.iter().enumerate().take(count) {
             let name = names.get(i).copied().unwrap_or("");
             let tid = id.with(i as u64);
@@ -136,6 +140,9 @@ impl Ui {
                 under = Rect::new(x + pad * 0.5, h - 3.0, w - pad, 3.0);
             }
             x += w;
+        }
+        if self.a11y_on {
+            self.a11y_parents.pop();
         }
         // The underline lives in the bar's own space, so it follows the bar
         // rigidly while springing from tab to tab.
@@ -227,6 +234,11 @@ impl Ui {
     /// `true` when the selection changed; `selected` indexes `items`.
     pub fn tree(&mut self, key: &str, items: &[(u8, &str)], selected: &mut Option<usize>) -> bool {
         let id = self.declare(key);
+        if self.a11y_on {
+            let rect = self.layout_rect(id).unwrap_or_default();
+            self.describe(id, Role::Tree, key, rect, None, None);
+            self.a11y_parents.push(id);
+        }
         let mut changed = false;
         // A selection set from outside (or the first one) opens its branch.
         let n = self.nodes.entry(id).or_insert_with(Node::new);
@@ -258,6 +270,9 @@ impl Ui {
         if changed {
             // Chosen here: nothing to open.
             self.nodes.get_mut(&id).unwrap().index = selected.map_or(0, |s| s + 1);
+        }
+        if self.a11y_on {
+            self.a11y_parents.pop();
         }
         changed
     }
@@ -300,7 +315,10 @@ impl Ui {
             }
             self.nodes.get_mut(&nid).unwrap().open = open;
             let on = *selected == Some(i);
-            self.describe(nid, Role::ListItem, label, r, branch.then_some(if open { "abierta" } else { "cerrada" }), Some(on));
+            self.describe(nid, Role::TreeItem, label, r, None, Some(on));
+            if branch {
+                self.describe_expanded(open);
+            }
             let (hover, _, t) = self.drive3(nid, hit.hovered, hit.held, open as u8 as f32, Smooth);
             let sel = {
                 let k = self.steps[Snappy as usize];
@@ -429,7 +447,8 @@ impl Ui {
             let cell = slot(k);
             self.enter(aid, cell, Snappy);
             let hit = self.hit(aid, cell);
-            self.describe(aid, Role::Button, if k == 0 { "Anterior" } else { "Siguiente" }, cell, None, None);
+            let name = if k == 0 { self.locale.previous } else { self.locale.next };
+            self.describe(aid, Role::Button, name, cell, None, None);
             if hit.clicked && to.is_some() {
                 go = to;
             }
@@ -442,7 +461,7 @@ impl Ui {
         match go {
             Some(to) if to != *current => {
                 *current = to;
-                self.learn(id, "página");
+                self.learn(id, self.locale.page);
                 true
             }
             _ => false,
@@ -494,7 +513,7 @@ impl Ui {
                 close = ui.icon_button("morfo-close", Icon::Close, Variant::Ghost, Size::Sm).clicked;
             });
             ui.separator();
-            f(ui);
+            ui.describe_group(id, Role::Dialog, title, f);
             ui.draw.push(DrawCmd::PopClip);
             ui.clip = None;
             if shown {

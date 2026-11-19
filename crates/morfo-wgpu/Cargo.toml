@@ -12,11 +12,11 @@ categories = ["gui", "rendering"]
 
 [dependencies]
 morfo = { package = "morfo-ui", path = "../morfo", version = "0.1.0" }
-wgpu = "23"
-ab_glyph = "0.2"
+wgpu = "30"
+morfo-fonts = { path = "../morfo-fonts", version = "0.1.0" }
 bytemuck = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 pollster = "1"
 morfo-skia = { path = "../morfo-skia" }
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "png-format"] }

@@ -301,4 +301,47 @@ mod tests {
         assert_eq!(Snapshot::decode("morfo-live1\nkey\tbad \\x escape\n"), None);
         assert!(Snapshot::decode("morfo-live1\n").unwrap().is_empty());
     }
+
+    /// Thousands of random edits of a valid snapshot: reading never
+    /// panics, and what is read back reads the same once saved again.
+    #[test]
+    fn damaged_snapshots_never_panic() {
+        let mut snap = Snapshot::new();
+        snap.set("tab", &7usize);
+        snap.set("name", &"Ana\tde \\ la\nCruz".to_string());
+        snap.set("list", &vec!["a".to_string(), String::new(), "c\td".to_string()]);
+        snap.set("pick", &Some(3usize));
+        snap.set("level", &0.25f32);
+        let valid = snap.encode();
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        };
+        let pieces = ["\\", "\t", "\n", "\t\t", "\\x", "\u{0}", "morfo-live1", "", "é", "\\n"];
+        for _ in 0..20_000 {
+            let mut text: Vec<char> = valid.chars().collect();
+            for _ in 0..1 + next() % 3 {
+                let at = (next() % (text.len() as u64 + 1)) as usize;
+                match next() % 3 {
+                    0 if at < text.len() => {
+                        text.remove(at);
+                    }
+                    1 => {
+                        for (i, c) in pieces[(next() % pieces.len() as u64) as usize].chars().enumerate() {
+                            text.insert((at + i).min(text.len()), c);
+                        }
+                    }
+                    _ => text.truncate(at),
+                }
+            }
+            let text: String = text.into_iter().collect();
+            if let Some(read) = Snapshot::decode(&text) {
+                let _ = (read.get::<usize>("tab"), read.get::<Vec<String>>("list"), read.get::<Option<usize>>("pick"), read.get::<f32>("level"));
+                assert_eq!(Snapshot::decode(&read.encode()).as_ref(), Some(&read), "{text:?}");
+            }
+        }
+    }
 }

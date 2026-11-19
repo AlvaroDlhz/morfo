@@ -114,7 +114,12 @@ impl Ui {
             let r = Rect::new(vp.x - bw * (3 - i) as f32, 0.0, bw, h - 1.0);
             let cid = id.child(name);
             let hit = self.hit(cid, r);
-            self.describe(cid, crate::a11y::Role::Button, name, r, None, None);
+            let spoken = match name {
+                "minimize" => self.locale.minimize,
+                "maximize" => self.locale.maximize,
+                _ => self.locale.close,
+            };
+            self.describe(cid, crate::a11y::Role::Button, spoken, r, None, None);
             let n = self.nodes.entry(cid).or_insert_with(Node::new);
             let fresh = n.touch(self.frame);
             n.rect.snap(r);

@@ -4,7 +4,9 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use morfo::theme::{ACCENT, BORDER, TEXT};
-use morfo::{Align, Color, DrawList, Icon, Prominence, Rect, Reveal, Side, Size, Transition, Ui, Variant, Vec2};
+use morfo::{
+    Adaptation, Align, Color, DrawList, Fit, Icon, MotionPreference, Path, Prominence, Rect, Reveal, Side, Size, Span, Transition, Ui, Variant, Vec2,
+};
 
 use crate::*;
 use morfo::Prominence as P;
@@ -31,7 +33,7 @@ const DESCRIPCIONES: [&str; 18] = [
     "Componentes dentro de componentes: claves propias, bloques pulsables o desactivados, contenido en pestañas y tablas, estilo heredado.",
 ];
 
-pub fn inicio(ui: &mut Ui, _s: &mut State) {
+pub fn inicio(ui: &mut Ui, s: &mut State) {
     ui.title("Qué es morfo");
     ui.paragraph_muted(
         "morfo es una librería de componentes para interfaces en Rust donde cada cambio es una transición continua y la interfaz se adapta a quien la usa. Dos personas que ejecutan el mismo programa pueden acabar viendo interfaces distintas.",
@@ -172,11 +174,53 @@ pub fn inicio(ui: &mut Ui, _s: &mut State) {
     });
 
     ui.space(8.0);
+    ui.title("Para cada persona");
+    ui.paragraph_muted("Cuánto se mueve, qué tamaño tiene el texto, cuánto se adapta y hacia qué lado se lee: lo decide quien la usa.");
+    ui.card("personas", |ui| {
+        ui.row(|ui| {
+            let mut reducir = ui.motion() != MotionPreference::Full;
+            if ui.toggle("reducir", &mut reducir) {
+                ui.set_motion(if reducir { MotionPreference::Reduced } else { MotionPreference::Full });
+            }
+            ui.label("Reducir el movimiento");
+        });
+        ui.row(|ui| {
+            let mut escala = (ui.text_scale() - 1.0) / 1.0;
+            ui.label("Tamaño del texto");
+            if ui.slider("escala", &mut escala, 200.0) {
+                ui.set_text_scale(1.0 + escala);
+            }
+            ui.muted(&format!("{:.0} %", ui.text_scale() * 100.0));
+        });
+        ui.row(|ui| {
+            ui.label("Adaptación");
+            let modos = [Adaptation::Off, Adaptation::Suggest, Adaptation::OnRequest, Adaptation::Live];
+            let mut i = modos.iter().position(|m| *m == ui.adaptation()).unwrap_or(3);
+            if ui.segmented("adaptacion", &["Nada", "Sugerir", "Al pedirlo", "Continua"], &mut i) {
+                ui.set_adaptation(modos[i]);
+            }
+        });
+        ui.row(|ui| {
+            ui.toggle("espejo", &mut s.rtl);
+            ui.label("De derecha a izquierda (como en hebreo o árabe)");
+        });
+        ui.paragraph_muted(
+            "שלום — con la escritura de derecha a izquierda la interfaz entera se dibuja en espejo, y estas letras se leen desde la derecha.",
+        );
+    });
+    ui.code(&[
+        "ui.set_motion(MotionPreference::Reduced);   // o lo que diga el sistema",
+        "ui.set_text_scale(1.5);",
+        "ui.set_adaptation(Adaptation::Suggest);      // nada se mueve solo",
+        "ui.set_locale(Locale::SPANISH.with_rtl(true));",
+    ]);
+
+    ui.space(8.0);
     ui.title("Lo que todavía no hace");
     ui.card("limites", |ui| {
-        ui.paragraph_muted("Una fuente normal y una monoespaciada: sin negritas, cursivas ni texto bidireccional (árabe, hebreo).");
-        ui.paragraph_muted("La tabla dibuja todas sus filas: para miles de filas hace falta paginarla.");
-        ui.paragraph_muted("El scroll es vertical y con rueda. Dibuja solo lo visible, pero recorre el layout de todo el contenido.");
+        ui.paragraph_muted("No conforma texto: el árabe sale con las letras sin enlazar y las escrituras índicas no se dibujan bien.");
+        ui.paragraph_muted("Sin desenfoque del fondo, y una sola ventana: menús y diálogos viven dentro de ella.");
+        ui.paragraph_muted("La tabla dibuja todas sus filas: para miles de filas, virtual_list o paginarla.");
         ui.paragraph_muted("La recarga en vivo relanza el programa entero y solo funciona en Unix.");
     });
 }
@@ -542,6 +586,23 @@ pub fn formas(ui: &mut Ui, s: &mut State) {
         "if ui.button(\"morph\", \"Transformar\").clicked { i = (i + 1) % FORMAS.len(); }",
     ]);
     ui.space(8.0);
+    ui.title("Imágenes");
+    ui.muted("Los píxeles se registran una vez y se muestran donde haga falta, con esquinas redondeadas y tres formas de encajar.");
+    let foto = fotos(ui, s)[2];
+    ui.card("card-imagenes", |ui| {
+        ui.columns(&[1.0, 1.0, 1.0], |ui, i| {
+            let (fit, nombre) = [(Fit::Cover, "Cover: llena y recorta"), (Fit::Contain, "Contain: cabe entera"), (Fit::Fill, "Fill: se estira")][i];
+            let w = ui.available_width();
+            ui.image(&format!("encaje-{i}"), foto, Vec2::new(w, 120.0), fit, nombre);
+            ui.muted(nombre);
+        });
+    });
+    ui.code(&[
+        "let foto = ui.add_image(ancho, alto, rgba).unwrap();      // una vez",
+        "ui.image(\"portada\", foto, Vec2::new(320.0, 180.0), Fit::Cover, \"Atardecer en la sierra\");",
+        "ui.replace_image(foto, ancho, alto, nuevos);              // otro fotograma de un vídeo",
+    ]);
+    ui.space(8.0);
     ui.title("Dibujo libre");
     ui.muted("canvas reserva un hueco y te da la lista de dibujo: polígonos rellenos, arcos, líneas y texto.");
     let level = s.level;
@@ -572,6 +633,38 @@ pub fn formas(ui: &mut Ui, s: &mut State) {
         "    d.arc(centro, 56.0, inicio, fin, 12.0, color);      // arco grueso con extremos redondeados",
         "    d.polygon(&puntos, Color::hex(0xf5b83d));          // cualquier forma, rellena",
         "});",
+    ]);
+    ui.space(8.0);
+    ui.title("Trazados, degradados e iconos propios");
+    ui.muted("Path lee datos de trazado SVG o se construye con líneas, curvas y arcos; se rellena o se traza a cualquier tamaño.");
+    let pal = *ui.palette();
+    ui.card("card-trazados", |ui| {
+        ui.canvas("trazados", Vec2::new(440.0, 110.0), |d, r| {
+            d.gradient(Rect::new(r.x, r.y, 150.0, 100.0), 18.0, r.min(), Vec2::new(r.x + 150.0, r.y + 100.0), pal[ACCENT], Color::hex(0xff7a59));
+            let corazon = Path::svg("M12 21 C5 15 2 11 2 7.5 A4.5 4.5 0 0 1 12 6 A4.5 4.5 0 0 1 22 7.5 C22 11 19 15 12 21 Z").unwrap();
+            corazon.fill_in(d, Rect::new(0.0, 0.0, 24.0, 24.0), Rect::new(r.x + 170.0, r.y, 100.0, 100.0), Color::hex(0xe5484d));
+            let onda = Path::new().move_to(Vec2::new(r.x + 290.0, r.y + 70.0)).cubic_to(
+                Vec2::new(r.x + 330.0, r.y - 10.0),
+                Vec2::new(r.x + 370.0, r.y + 120.0),
+                Vec2::new(r.x + 430.0, r.y + 30.0),
+            );
+            onda.stroke(d, 3.0, pal[TEXT]);
+            d.dashed_line(Vec2::new(r.x + 290.0, r.y + 98.0), Vec2::new(r.x + 430.0, r.y + 98.0), 2.0, 8.0, 6.0, pal[BORDER]);
+        });
+        ui.row(|ui| {
+            const CAMPANA: Icon = Icon::Stroke("M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10.3 21a1.94 1.94 0 0 0 3.4 0");
+            const NUBE: Icon = Icon::Fill("M17.5 19H7a5 5 0 1 1 1.6-9.7A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8Z");
+            ui.icon_button("campana", CAMPANA, Variant::Soft, Size::Md);
+            ui.icon_button("nube", NUBE, Variant::Soft, Size::Md);
+            ui.button_icon("avisos", CAMPANA, "Avisos", Variant::Outline, Size::Md);
+        });
+    });
+    ui.code(&[
+        "let corazon = Path::svg(\"M12 21 C5 15 2 11 2 7.5 A4.5 4.5 0 0 1 12 6 …Z\").unwrap();",
+        "corazon.fill_in(lista, Rect::new(0.0, 0.0, 24.0, 24.0), destino, rojo);",
+        "lista.gradient(rect, radio, desde, hasta, acento, naranja);",
+        "lista.dashed_line(a, b, 2.0, 8.0, 6.0, borde);",
+        "const CAMPANA: Icon = Icon::Stroke(\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\");",
     ]);
 }
 
@@ -736,6 +829,57 @@ pub fn entrada(ui: &mut Ui, s: &mut State) {
         "// Accesibilidad: solo cuesta algo cuando un lector la pide",
         "ui.set_accessibility(true);",
         "for nodo in ui.access_nodes() { /* papel, nombre, valor, rectángulo */ }",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Texto enriquecido");
+    ui.card("card-rico", |ui| {
+        ui.rich(&[
+            Span::new("Un párrafo puede mezclar "),
+            Span::new("negrita").bold(),
+            Span::new(", "),
+            Span::new("cursiva").italic(),
+            Span::new(", "),
+            Span::new("código").mono(),
+            Span::new(", "),
+            Span::new("acento").accent(),
+            Span::new(" y "),
+            Span::new("texto atenuado").muted(),
+            Span::new(
+                ", y se ajusta al ancho como un solo texto. Los caracteres que la fuente no tiene (→ ✓ ★ שלום) salen de una fuente de reserva.",
+            ),
+        ]);
+    });
+    ui.code(&[
+        "ui.rich(&[",
+        "    Span::new(\"Pulsa \"),",
+        "    Span::new(\"Guardar\").bold(),",
+        "    Span::new(\" o \"),",
+        "    Span::new(\"Ctrl+S\").mono(),",
+        "]);",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Contraseñas, números y errores");
+    ui.muted("Un campo con etiqueta anuncia su error al lector de pantalla en cuanto aparece.");
+    ui.card("card-campos", |ui| {
+        ui.field("clave", "Contraseña", (s.secret.chars().count() < 8).then_some("Al menos 8 caracteres"), |ui| {
+            ui.password_field("valor", &mut s.secret, "••••••••", 280.0);
+        });
+        ui.field("importe", "Importe", None, |ui| {
+            ui.number_field("valor", &mut s.amount, 2, (0.0, 1_000_000.0), 200.0);
+        });
+        let error = (!s.email.contains('@') || s.email.ends_with('@')).then_some("Falta el dominio: ada@ejemplo.org");
+        ui.field("correo", "Correo", error, |ui| {
+            ui.text_field("valor", &mut s.email, "tú@ejemplo.org", 280.0);
+        });
+    });
+    ui.code(&[
+        "let error = (clave.chars().count() < 8).then_some(\"Al menos 8 caracteres\");",
+        "ui.field(\"clave\", \"Contraseña\", error, |ui| {",
+        "    ui.password_field(\"valor\", &mut clave, \"••••••••\", 280.0);",
+        "});",
+        "ui.number_field(\"importe\", &mut importe, 2, (0.0, 1_000_000.0), 200.0);",
     ]);
 }
 
@@ -1016,6 +1160,42 @@ pub fn datos(ui: &mut Ui, s: &mut State) {
     ui.code(&[
         "// 20 000 filas de 34 px en una ventana de 240 px",
         "ui.virtual_list(\"registro\", 20_000, 34.0, 240.0, |ui, i| { ui.label(&fila(i)); });",
+    ]);
+
+    ui.space(8.0);
+    ui.title("Arrastrar y soltar");
+    ui.muted("Cualquier contenido se arrastra hasta cualquier destino, con un dato propio. Con el dedo, tras una pulsación larga.");
+    const FRUTAS: [&str; 4] = ["Manzanas", "Peras", "Uvas", "Ciruelas"];
+    ui.card("card-cestas", |ui| {
+        let mut moved = None;
+        ui.columns(&[1.0, 1.0], |ui, c| {
+            let nombre = ["En la mesa", "En la cesta"][c];
+            if let Some(p) = ui.drop_target(&format!("cesta-{c}"), |ui, _encima| {
+                ui.label(nombre);
+                for &f in &s.baskets[c] {
+                    ui.draggable(&format!("fruta-{f}"), f as u64, |ui| {
+                        ui.chip(&format!("chip-{f}"), FRUTAS[f], &mut false);
+                    });
+                }
+                if s.baskets[c].is_empty() {
+                    ui.muted("Suelta algo aquí");
+                }
+            }) {
+                moved = Some((p as usize, c));
+            }
+        });
+        if let Some((f, to)) = moved {
+            for b in s.baskets.iter_mut() {
+                b.retain(|&x| x != f);
+            }
+            s.baskets[to].push(f);
+        }
+    });
+    ui.code(&[
+        "ui.draggable(\"fruta-2\", 2, |ui| ui.label(\"Uvas\"));",
+        "if let Some(dato) = ui.drop_target(\"cesta\", |ui, encima| ui.label(\"Cesta\")) {",
+        "    mover(dato, a_la_cesta);",
+        "}",
     ]);
 }
 
@@ -1421,15 +1601,9 @@ const AGENDA: [(&str, &[&str]); 5] = [
 
 const CIUDADES_AGENDA: [&str; 6] = ["Madrid", "Lugo", "Cádiz", "Soria", "Teruel", "Ávila"];
 
-/// Un degradado vertical de `top` a `bottom`, en franjas de unos 4 px que
-/// se tocan sin solaparse (solapadas, al desvanecerse se verían rayas).
+/// Un degradado vertical de `top` a `bottom`.
 fn gradient(list: &mut DrawList, r: Rect, top: Color, bottom: Color) {
-    let strips = ((r.h / 4.0) as usize).clamp(8, 160);
-    let h = r.h / strips as f32;
-    for i in 0..strips {
-        let (y, next) = ((r.y + h * i as f32).round(), (r.y + h * (i + 1) as f32).round());
-        list.rect(Rect::new(r.x, y, r.w, next - y), 0.0, top.mix(bottom, i as f32 / (strips - 1) as f32));
-    }
+    list.gradient(r, 0.0, r.min(), Vec2::new(r.x, r.bottom()), top, bottom);
 }
 
 /// Una línea de colinas que ondula a lo ancho de `r`, de `base` hacia abajo.
@@ -1622,17 +1796,43 @@ pub(crate) const FOTOS: [(&str, &str, [u32; 5]); 6] = [
     ("Aurora", "Verdes y violetas sobre la nieve.", [0x0d1b2a, 0x3ddc97, 0xd6fff0, 0x6c5ce7, 0x2d3561]),
 ];
 
-/// La foto `i`, pintada en `r`.
-fn foto(list: &mut DrawList, r: Rect, i: usize) {
+/// Los píxeles de la foto `i` a `w`×`h`: cielo en degradado, sol y dos
+/// líneas de colinas, calculados punto a punto (bordes suavizados por la
+/// distancia a cada curva).
+fn foto_pixels(i: usize, w: u32, h: u32) -> Vec<u8> {
     let [cielo, horizonte, sol, lejos, cerca] = FOTOS[i].2.map(Color::hex);
-    list.push(morfo::DrawCmd::PushClip { rect: r, radius: 12.0 });
-    gradient(list, r, cielo, horizonte);
-    let d = r.h * 0.28;
-    let c = Vec2::new(r.x + r.w * (0.3 + 0.08 * i as f32), r.y + r.h * 0.38);
-    list.rect(Rect::new(c.x - d * 0.5, c.y - d * 0.5, d, d), d * 0.5, sol);
-    hills(list, r, r.y + r.h * 0.78, r.h * 0.32, 1.4, i as f32, lejos);
-    hills(list, r, r.y + r.h * 0.95, r.h * 0.22, 2.2, i as f32 * 1.7 + 1.0, cerca);
-    list.push(morfo::DrawCmd::PopClip);
+    let (wf, hf) = (w as f32, h as f32);
+    let colina = |x: f32, base: f32, alto: f32, ondas: f32, fase: f32| {
+        let t = x / wf;
+        base - alto * (0.55 + 0.45 * (t * ondas * TAU + fase).sin() * (t * 2.3 + fase).cos())
+    };
+    let centro = Vec2::new(wf * (0.3 + 0.08 * i as f32), hf * 0.38);
+    let radio = hf * 0.14;
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let py = y as f32 + 0.5;
+        let fila = cielo.mix(horizonte, py / hf);
+        for x in 0..w {
+            let px = x as f32 + 0.5;
+            let mut c = fila;
+            let d = ((px - centro.x).powi(2) + (py - centro.y).powi(2)).sqrt() - radio;
+            c = c.mix(sol, (0.5 - d).clamp(0.0, 1.0));
+            let y1 = colina(px, hf * 0.78, hf * 0.32, 1.4, i as f32);
+            c = c.mix(lejos, (py - y1 + 0.5).clamp(0.0, 1.0));
+            let y2 = colina(px, hf * 0.95, hf * 0.22, 2.2, i as f32 * 1.7 + 1.0);
+            c = c.mix(cerca, (py - y2 + 0.5).clamp(0.0, 1.0));
+            out.extend_from_slice(&[(c.r * 255.0) as u8, (c.g * 255.0) as u8, (c.b * 255.0) as u8, 255]);
+        }
+    }
+    out
+}
+
+/// Las fotos de la galería como imágenes, creadas la primera vez.
+fn fotos(ui: &mut Ui, s: &mut State) -> Vec<morfo::ImageId> {
+    if s.photos.is_empty() {
+        s.photos = (0..FOTOS.len()).filter_map(|i| ui.add_image(480, 300, foto_pixels(i, 480, 300))).collect();
+    }
+    s.photos.clone()
 }
 
 pub fn transiciones(ui: &mut Ui, s: &mut State) {
@@ -1688,13 +1888,14 @@ pub fn transiciones(ui: &mut Ui, s: &mut State) {
         ui.paragraph_muted("Abre una foto: vuela desde la galería hasta la vista de detalle, y vuelve a su sitio al cerrarla.");
         let vista = s.photo.map_or(0, |i| i + 1);
         let photo = s.photo;
+        let imagenes = fotos(ui, s);
         ui.transition("galeria", vista, Transition::Zoom, |ui| match photo {
             None => ui.grid(3, |ui| {
                 for (i, (nombre, _, _)) in FOTOS.iter().enumerate() {
                     ui.column(|ui| {
                         let w = ui.available_width();
                         ui.hero(&format!("foto-{i}"), |ui| {
-                            ui.canvas(&format!("mini-{i}"), Vec2::new(w, 96.0), |list, r| foto(list, r, i));
+                            ui.image(&format!("mini-{i}"), imagenes[i], Vec2::new(w, 96.0), Fit::Cover, nombre);
                         });
                         if ui.button_with(&format!("abrir-{i}"), nombre, Variant::Ghost, Size::Sm).clicked {
                             s.photo = Some(i);
@@ -1713,7 +1914,7 @@ pub fn transiciones(ui: &mut Ui, s: &mut State) {
                 });
                 let w = ui.available_width();
                 ui.hero(&format!("foto-{i}"), |ui| {
-                    ui.canvas(&format!("grande-{i}"), Vec2::new(w, 250.0), |list, r| foto(list, r, i));
+                    ui.image(&format!("grande-{i}"), imagenes[i], Vec2::new(w, 250.0), Fit::Cover, nombre);
                 });
                 ui.title(nombre);
                 ui.paragraph_muted(texto);
@@ -1722,8 +1923,8 @@ pub fn transiciones(ui: &mut Ui, s: &mut State) {
     });
     ui.code(&[
         "// en la galería y en el detalle, con la misma clave",
-        "ui.hero(\"foto-3\", |ui| ui.canvas(\"mini-3\", tamaño, pintar));",
-        "ui.hero(\"foto-3\", |ui| ui.canvas(\"grande-3\", tamaño_grande, pintar));",
+        "ui.hero(\"foto-3\", |ui| ui.image(\"mini-3\", foto, tamaño, Fit::Cover, \"Atardecer\"));",
+        "ui.hero(\"foto-3\", |ui| ui.image(\"grande-3\", foto, tamaño_grande, Fit::Cover, \"Atardecer\"));",
     ]);
 
     ui.space(8.0);

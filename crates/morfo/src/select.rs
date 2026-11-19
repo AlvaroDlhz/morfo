@@ -205,7 +205,8 @@ impl Ui {
             let target = self.alloc(Vec2::new(self.available_width(), self.theme.control.max(want)));
             let (r, life) = self.enter(header, target, Smooth);
             let hit = self.hit(header, r);
-            self.describe(header, Role::Button, name, r, None, Some(*open == Some(i)));
+            self.describe(header, Role::Button, name, r, None, None);
+            self.describe_expanded(*open == Some(i));
             if hit.clicked {
                 *open = if *open == Some(i) { None } else { Some(i) };
                 self.learn(header, name);
